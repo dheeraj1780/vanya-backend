@@ -1,15 +1,22 @@
 """
 Stores plant photos. STORAGE_BACKEND=local (the default) writes to disk and
-serves the file via this API's own static mount — fully functional for
-development and small-scale use, not a mock. Swap to S3/Supabase Storage
-before a real launch by implementing the `_save_to_s3` branch below; the
-function signature callers use (`save_plant_photo`) does not need to change.
+serves the file via this API's own static mount — fine for local dev, but
+NOT safe in production: most hosting platforms (Render, Railway, etc.)
+give a container an ephemeral filesystem that's wiped on every redeploy or
+restart, silently deleting every user's plant photos. STORAGE_BACKEND=s3
+writes to any S3-compatible bucket instead (Cloudflare R2, AWS S3,
+Backblaze B2, DigitalOcean Spaces — same API, just a different
+endpoint_url) and survives redeploys the way a real production app needs
+to. The function signature callers use (`save_plant_photo`) is identical
+either way.
 """
 import base64
 import os
 import uuid
 
 import aiofiles
+import boto3
+from botocore.config import Config as BotoConfig
 
 from app.core.config import get_settings
 from app.core.exceptions import BadRequestError, InternalServerError, PayloadTooLargeError
@@ -17,6 +24,22 @@ from app.core.exceptions import BadRequestError, InternalServerError, PayloadToo
 settings = get_settings()
 
 _MAX_PHOTO_BYTES = 5 * 1024 * 1024  # 5MB — generous for a client-compressed ~1024px JPEG
+
+_s3_client = None  # lazily constructed — only ever needed when STORAGE_BACKEND=s3
+
+
+def _get_s3_client():
+    global _s3_client
+    if _s3_client is None:
+        _s3_client = boto3.client(
+            "s3",
+            endpoint_url=settings.s3_endpoint_url or None,
+            aws_access_key_id=settings.s3_access_key_id,
+            aws_secret_access_key=settings.s3_secret_access_key,
+            region_name=settings.s3_region,
+            config=BotoConfig(signature_version="s3v4"),
+        )
+    return _s3_client
 
 
 async def save_plant_photo(image_base64: str, plant_id: str) -> str:
@@ -30,11 +53,11 @@ async def save_plant_photo(image_base64: str, plant_id: str) -> str:
         if len(raw_bytes) > _MAX_PHOTO_BYTES:
             raise PayloadTooLargeError("Image exceeds the maximum allowed size (5MB)")
 
+        if settings.storage_backend == "s3":
+            return await _save_to_s3(raw_bytes, plant_id)
         if settings.storage_backend == "local":
             return await _save_to_local_disk(raw_bytes, plant_id)
 
-        # Production swap point — implement using boto3 / Supabase Storage client,
-        # keeping the same return type (a public URL string).
         raise InternalServerError(f"Unsupported STORAGE_BACKEND: {settings.storage_backend}")
     except (BadRequestError, PayloadTooLargeError, InternalServerError):
         raise
@@ -49,3 +72,28 @@ async def _save_to_local_disk(raw_bytes: bytes, plant_id: str) -> str:
     async with aiofiles.open(filepath, "wb") as f:
         await f.write(raw_bytes)
     return f"{settings.public_base_url}/uploads/{filename}"
+
+
+async def _save_to_s3(raw_bytes: bytes, plant_id: str) -> str:
+    import asyncio
+
+    key = f"plants/{plant_id}-{uuid.uuid4().hex[:8]}.jpg"
+
+    def _put():
+        _get_s3_client().put_object(
+            Bucket=settings.s3_bucket,
+            Key=key,
+            Body=raw_bytes,
+            ContentType="image/jpeg",
+        )
+
+    try:
+        # boto3 is synchronous/blocking — run it off the event loop so one
+        # slow upload doesn't stall every other concurrent request this
+        # async server is handling.
+        await asyncio.to_thread(_put)
+    except Exception as exc:
+        raise InternalServerError(f"Failed to upload photo to S3-compatible storage: {exc}") from exc
+
+    base = settings.s3_public_url_base.rstrip("/")
+    return f"{base}/{key}"

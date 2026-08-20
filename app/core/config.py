@@ -46,10 +46,24 @@ class Settings(BaseSettings):
     gemini_api_key: str = ""
     ai_model: str = "gemini-3.5-flash-lite"
 
-    # Photo storage
+    # Photo storage — "local" (dev only, see storage.py's module docstring
+    # on why it's unsafe on most production hosts) or "s3" (any
+    # S3-compatible provider: Cloudflare R2, AWS S3, Backblaze B2, DO
+    # Spaces — same API, just a different endpoint_url).
     storage_backend: str = "local"
     local_storage_dir: str = "./uploads"
     public_base_url: str = "http://localhost:8000"
+
+    # S3-compatible storage — only used when storage_backend="s3".
+    s3_endpoint_url: str = ""  # e.g. https://<account_id>.r2.cloudflarestorage.com for R2; leave blank for real AWS S3
+    s3_bucket: str = ""
+    s3_access_key_id: str = ""
+    s3_secret_access_key: str = ""
+    s3_region: str = "auto"  # R2 uses "auto"; AWS S3 needs a real region like "ap-south-1"
+    # The URL prefix photos are actually served from — a public R2/S3
+    # bucket URL, or (better, for a real launch) a CDN/custom domain
+    # sitting in front of the bucket. Photo URLs become f"{s3_public_url_base}/{key}".
+    s3_public_url_base: str = ""
 
     # Daily AI-provider call cap — an infra cost safety net, NOT a
     # subscription-tier value. Distinct from the per-tier weekly/monthly
