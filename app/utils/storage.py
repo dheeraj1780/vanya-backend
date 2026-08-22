@@ -10,9 +10,11 @@ endpoint_url) and survives redeploys the way a real production app needs
 to. The function signature callers use (`save_plant_photo`) is identical
 either way.
 """
+import asyncio
 import base64
 import os
 import uuid
+from typing import Optional
 
 import aiofiles
 import boto3
@@ -74,9 +76,43 @@ async def _save_to_local_disk(raw_bytes: bytes, plant_id: str) -> str:
     return f"{settings.public_base_url}/uploads/{filename}"
 
 
-async def _save_to_s3(raw_bytes: bytes, plant_id: str) -> str:
-    import asyncio
+async def delete_plant_photo(photo_url: Optional[str]) -> None:
+    """Best-effort cleanup of the object/file a photo_url points at — called
+    when a plant is deleted, and when a photo is replaced by a newer one.
+    Deliberately never raises: losing the DB row (or landing the new photo)
+    is the operation that actually matters to the caller, and a storage
+    provider hiccup here shouldn't turn that into a failed request. Without
+    this, every deleted/replaced plant photo silently orphans its object in
+    the bucket forever (harmless short-term, but an unbounded storage leak
+    over the app's lifetime)."""
+    if not photo_url:
+        return
+    try:
+        if settings.storage_backend == "s3":
+            base = settings.s3_public_url_base.rstrip("/")
+            if not photo_url.startswith(base + "/"):
+                return  # not one of ours (e.g. left over from a past backend) — nothing to clean up
+            key = photo_url[len(base) + 1:]
 
+            def _delete():
+                _get_s3_client().delete_object(Bucket=settings.s3_bucket, Key=key)
+
+            await asyncio.to_thread(_delete)
+        elif settings.storage_backend == "local":
+            prefix = f"{settings.public_base_url}/uploads/"
+            if not photo_url.startswith(prefix):
+                return
+            filename = photo_url[len(prefix):]
+            filepath = os.path.join(settings.local_storage_dir, filename)
+            if os.path.exists(filepath):
+                os.remove(filepath)
+    except Exception:
+        # Best-effort only — see docstring. Nothing to recover here; the
+        # object is orphaned but the caller's actual request still succeeds.
+        pass
+
+
+async def _save_to_s3(raw_bytes: bytes, plant_id: str) -> str:
     key = f"plants/{plant_id}-{uuid.uuid4().hex[:8]}.jpg"
 
     def _put():

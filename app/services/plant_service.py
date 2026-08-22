@@ -18,7 +18,7 @@ from app.repositories.plant_repository import (
 )
 from app.schemas.plant import PlantInput, PlantItem, PlantUpdateInput
 from app.services.entitlement_service import check_plant_slot_limit, check_wishlist_limit
-from app.utils.storage import save_plant_photo
+from app.utils.storage import delete_plant_photo, save_plant_photo
 
 
 def _to_plant_item(plant: Plant) -> PlantItem:
@@ -145,7 +145,12 @@ async def update_plant(db: AsyncSession, user: User, plant_id: str, update: Plan
 async def delete_plant(db: AsyncSession, user: User, plant_id: str) -> None:
     try:
         plant = await _get_owned_plant(db, user, plant_id)
+        photo_url = plant.photo_url
         await delete_plant_repo(db, plant)
+        # After the DB row is gone, not before — the plant record is the
+        # thing that actually matters here, and a storage hiccup shouldn't
+        # block the delete. See delete_plant_photo's docstring.
+        await delete_plant_photo(photo_url)
     except AppException:
         raise
     except Exception as exc:
@@ -155,8 +160,14 @@ async def delete_plant(db: AsyncSession, user: User, plant_id: str) -> None:
 async def upload_plant_photo(db: AsyncSession, user: User, plant_id: str, image_base64: str) -> str:
     try:
         plant = await _get_owned_plant(db, user, plant_id)
+        previous_photo_url = plant.photo_url
         photo_url = await save_plant_photo(image_base64, plant_id)
         await update_plant_photo(db, plant, photo_url)
+        # Clean up the photo this one replaces (e.g. re-scanning the same
+        # plant) — after the new photo/DB row are both in place, so a
+        # cleanup failure never risks the plant ending up with no photo.
+        if previous_photo_url and previous_photo_url != photo_url:
+            await delete_plant_photo(previous_photo_url)
         return photo_url
     except AppException:
         raise
