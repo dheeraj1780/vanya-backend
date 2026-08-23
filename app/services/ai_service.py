@@ -23,7 +23,7 @@ settings = get_settings()
 # separate from (and tighter than) the general daily AI-cost safety net
 # below, so a handful of honest mis-scans never penalizes anyone, but
 # repeatedly feeding it junk for the rest of the day does.
-_MAX_NON_PLANT_ATTEMPTS_PER_DAY = 5
+_MAX_NON_PLANT_ATTEMPTS_PER_DAY = 3
 
 
 async def get_latest_diagnosis(db: AsyncSession, user: User, plant_id: str) -> LatestDiagnosisData:
