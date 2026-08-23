@@ -24,6 +24,20 @@ website, not inside the app, which is what keeps Google's commission at
 created in the Razorpay dashboard (Subscriptions > Plans) — see that
 file's TODO comment for the exact values still needed.
 
+TIER LADDER: every allowance strictly increases up the ladder — guest <
+plantie < green_thumb < photosynthesis_phd — including in the very first
+period after signing up, not just cumulatively over time. This used to be
+violated (Plantie's identification was 1/week against Guest's 3-lifetime,
+and max_plants was 3 on both), which meant a brand-new signed-in Plantie
+account looked *worse* than staying anonymous — exactly backwards for a
+tier whose entire purpose is to reward creating an account. Guest's
+allowances are lifetime (one anonymous trial, not an ongoing relationship);
+every signed-in tier's are recurring (weekly/monthly), so even where a
+signed-in tier's per-period number equals Guest's one-time number, it's
+still a strictly better deal by the second period — but per-period numbers
+are now also individually >= the tier below wherever that comparison makes
+sense, so it never LOOKS like a downgrade to sign up.
+
 WISHLIST: max_plants is deliberately small on every tier — it's a
 *garden*, not a database, and reminders/calculators/diagnose all cost
 something per active plant. But a hard cap on "plants I'm tracking" was
@@ -98,11 +112,11 @@ PLANS: Dict[str, PlanConfig] = {
         emoji="🌱",
         price_inr=0,
         billing="none",
-        max_plants=3,
+        max_plants=5,
         wishlist_limit=5,
         garden_setup_identifications=0,
-        identification=FeatureAllowance(1, "weekly"),
-        care_calculator=FeatureAllowance(2, "weekly"),
+        identification=FeatureAllowance(3, "weekly"),
+        care_calculator=FeatureAllowance(3, "weekly"),
         diagnose=FeatureAllowance(1, "monthly"),
     ),
     "green_thumb": PlanConfig(
@@ -115,7 +129,7 @@ PLANS: Dict[str, PlanConfig] = {
         max_plants=10,
         wishlist_limit=20,
         garden_setup_identifications=10,
-        identification=FeatureAllowance(3, "weekly"),
+        identification=FeatureAllowance(7, "weekly"),
         care_calculator=FeatureAllowance(7, "weekly"),
         diagnose=FeatureAllowance(2, "monthly"),
         razorpay_plan_id="plan_TRk4u6iPqBbxmL",
