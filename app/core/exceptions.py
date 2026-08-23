@@ -4,6 +4,9 @@ This is what lets main.py's exception handler convert any of them into the
 uniform envelope with the correct status code, in exactly one place, so no
 router has to remember to catch-and-format errors itself.
 """
+import logging
+
+logger = logging.getLogger("plant_companion")
 
 
 class AppException(Exception):
@@ -77,13 +80,33 @@ class RateLimitedError(AppException):
 
 
 class InternalServerError(AppException):
+    """500 — something genuinely broke unexpectedly. Every call site across
+    the codebase writes `f"...: {exc}"` here for its own debugging value
+    (SQL errors, stack details, ...) — that detail is logged server-side
+    only (see __init__) and never reaches the client, which previously
+    wasn't true: a raw asyncpg IntegrityError (full SQL, parameters,
+    another user's email) once landed straight on the sign-in screen this
+    way. Client-facing 4xx AppExceptions (NotFoundError, BadRequestError,
+    ...) are unaffected — their messages are hand-written to be safe to
+    show as-is, this only covers genuinely-unexpected failures."""
     status_code = 500
     error_code = "INTERNAL_SERVER_ERROR"
 
+    def __init__(self, message: str) -> None:
+        logger.error(message)
+        super().__init__("Something went wrong on our end. Please try again.")
+
 
 class ExternalProviderError(AppException):
+    """502 — an external service (Gemini, Open-Meteo, Razorpay, ...) failed
+    or returned something unparseable. Same reasoning as InternalServerError:
+    the real provider error detail is logged server-side only."""
     status_code = 502
     error_code = "EXTERNAL_PROVIDER_ERROR"
+
+    def __init__(self, message: str) -> None:
+        logger.error(message)
+        super().__init__("A service we depend on is temporarily unavailable. Please try again in a moment.")
 
 
 class InvalidSignatureError(AppException):

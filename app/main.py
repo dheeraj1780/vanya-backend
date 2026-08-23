@@ -1,6 +1,7 @@
 """
 App entrypoint. Run with: uvicorn app.main:app --reload
 """
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -66,9 +67,14 @@ async def app_exception_handler(request: Request, exc: AppException):
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):
     """Last-resort safety net for anything truly unexpected — still returns
-    the same uniform envelope instead of leaking a stack trace."""
+    the same uniform envelope instead of leaking a stack trace. The real
+    exception is logged server-side only; the client only ever sees a
+    generic message (this docstring used to claim that while actually
+    doing the opposite — see InternalServerError in core/exceptions.py,
+    which now owns this same fix for every *handled* internal error too)."""
     trace_id = request.headers.get("request-id", "unknown")
-    return error_response(f"An unexpected error occurred: {exc}", "INTERNAL_SERVER_ERROR", 500, trace_id)
+    logging.getLogger("plant_companion").error(f"Unhandled exception: {exc}", exc_info=exc)
+    return error_response("Something went wrong on our end. Please try again.", "INTERNAL_SERVER_ERROR", 500, trace_id)
 
 
 @app.get("/health")
