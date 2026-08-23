@@ -11,7 +11,7 @@ from app.dependencies import get_current_user, get_request_id
 from app.models.user import User
 from app.schemas.plant import PhotoUploadRequest, PlantInput, PlantUpdateInput
 from app.services.ai_service import get_latest_diagnosis
-from app.services.calculator_service import compute_care_calculators
+from app.services.calculator_service import compute_care_calculators, preview_location_weather
 from app.services.plant_service import create_plant, delete_plant, list_plants, move_to_garden, update_plant, upload_plant_photo
 
 router = APIRouter(prefix="/plants", tags=["Plants"])
@@ -151,6 +151,25 @@ async def get_latest_diagnosis_endpoint(
         return error_response(exc.message, exc.error_code, exc.status_code, trace_id)
     except Exception as exc:
         return error_response(f"Unexpected error fetching latest diagnosis: {exc}", "INTERNAL_SERVER_ERROR", 500, trace_id)
+
+
+@router.get("/weather-preview")
+async def get_weather_preview_endpoint(
+    latitude: float = Query(..., ge=-90, le=90),
+    longitude: float = Query(..., ge=-180, le=180),
+    current_user: User = Depends(get_current_user),
+    trace_id: str = Depends(get_request_id),
+) -> JSONResponse:
+    """Season + temperature for a raw lat/long — no plant, no calculator
+    limit consumed. Lets the Care Calculator screen show what a just-granted
+    location resolves to immediately, instead of only after Calculate."""
+    try:
+        data = await preview_location_weather(latitude, longitude)
+        return success_response(data.model_dump(mode="json"), "Location weather resolved successfully", 200, trace_id)
+    except AppException as exc:
+        return error_response(exc.message, exc.error_code, exc.status_code, trace_id)
+    except Exception as exc:
+        return error_response(f"Unexpected error resolving location weather: {exc}", "INTERNAL_SERVER_ERROR", 500, trace_id)
 
 
 @router.get("/{plant_id}/calculators")

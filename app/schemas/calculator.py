@@ -27,6 +27,15 @@ class LightFitResult(BaseModel):
     reasoning: str
 
 
+class LocationWeatherPreview(BaseModel):
+    """Result of GET /plants/weather-preview — a plant-less, limit-free peek
+    at what a raw lat/long resolves to, so the Care Calculator screen can
+    show it the moment location is granted instead of only after a full
+    Calculate run."""
+    season: Literal["spring", "summer", "autumn", "winter"]
+    temperature_c: Optional[float] = None
+
+
 class CalculatorData(BaseModel):
     plant_id: str
     nickname: str

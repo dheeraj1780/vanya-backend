@@ -27,7 +27,7 @@ from app.core.exceptions import AppException, InternalServerError
 from app.models.plant import Plant
 from app.models.user import User
 from app.repositories.diagnosis_repository import count_ai_calls_today, log_ai_call
-from app.schemas.calculator import CalculatorData, FertilizerDoseResult, LightFitResult, WateringScheduleResult
+from app.schemas.calculator import CalculatorData, FertilizerDoseResult, LightFitResult, LocationWeatherPreview, WateringScheduleResult
 from app.services.entitlement_service import check_calculator_limit
 from app.services.plant_service import get_plant_for_user
 from app.utils.ai_provider import calculate_care as call_ai_calculate
@@ -183,6 +183,23 @@ async def _under_daily_ai_limit(db: AsyncSession, user: User) -> bool:
     fallback instead of failing outright when the day's AI quota is used up."""
     calls_today = await count_ai_calls_today(db, user.user_id)
     return calls_today < settings.ai_daily_call_limit
+
+
+async def preview_location_weather(latitude: float, longitude: float) -> LocationWeatherPreview:
+    """Lightweight season+temperature lookup for a raw lat/long — lets the
+    Care Calculator screen show what "auto-detect from your location" will
+    actually resolve to right after location permission is granted, instead
+    of only after the user presses Calculate. Deliberately separate from
+    compute_care_calculators: no plant, no calculator-usage limit consumed
+    (check_calculator_limit) and no AI call — this is just showing weather,
+    not "using" the calculator feature."""
+    try:
+        weather = await get_current_weather(latitude, longitude)
+        return LocationWeatherPreview(season=weather["season"], temperature_c=weather["temperature_c"])
+    except AppException:
+        # Open-Meteo unreachable/failed — same calendar-only fallback the
+        # full calculator uses in this case, just without a temperature.
+        return LocationWeatherPreview(season=season_for_latitude(latitude), temperature_c=None)
 
 
 async def compute_care_calculators(
