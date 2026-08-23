@@ -1,3 +1,5 @@
+from datetime import timedelta
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
@@ -5,6 +7,7 @@ from app.core.exceptions import AppException, InternalServerError, RateLimitedEr
 from app.models.user import User
 from app.repositories.diagnosis_read_repository import get_latest_diagnosis_for_plant
 from app.repositories.diagnosis_repository import count_ai_calls_today, create_diagnosis_log, log_ai_call
+from app.repositories.usage_repository import count_calls_since, utcnow
 from app.schemas.ai import DiagnoseData, DiagnoseRequest, IdentifyData, LatestDiagnosisData
 from app.services.entitlement_service import check_diagnose_limit, check_identification_limit
 from app.services.plant_service import check_plant_limit, get_plant_for_user
@@ -12,6 +15,15 @@ from app.utils.ai_provider import diagnose_plant as call_ai_diagnose
 from app.utils.ai_provider import identify_plant as call_ai_identify
 
 settings = get_settings()
+
+# BUG-C003: a non-real-plant result (artificial plant, random object, ...)
+# never costs the user their real "identify" allowance — see the call_type
+# branch below — which on its own would make identify a free-to-spam way to
+# burn real Gemini API calls against nothing. This caps that specifically,
+# separate from (and tighter than) the general daily AI-cost safety net
+# below, so a handful of honest mis-scans never penalizes anyone, but
+# repeatedly feeding it junk for the rest of the day does.
+_MAX_NON_PLANT_ATTEMPTS_PER_DAY = 5
 
 
 async def get_latest_diagnosis(db: AsyncSession, user: User, plant_id: str) -> LatestDiagnosisData:
@@ -43,22 +55,50 @@ async def _check_rate_limit(db: AsyncSession, user: User) -> None:
         raise RateLimitedError("Daily request limit reached — try again tomorrow")
 
 
+async def _check_non_plant_abuse(db: AsyncSession, user: User) -> None:
+    """See _MAX_NON_PLANT_ATTEMPTS_PER_DAY's docstring. Checked up front
+    (before spending an AI call) rather than only logged after the fact —
+    once someone's racked up enough non-plant results today, this blocks
+    the *next* identify attempt outright instead of waiting for it to also
+    turn out to be junk."""
+    since = utcnow() - timedelta(hours=24)
+    non_plant_attempts = await count_calls_since(db, user.user_id, "identify_not_plant", since)
+    if non_plant_attempts >= _MAX_NON_PLANT_ATTEMPTS_PER_DAY:
+        raise RateLimitedError(
+            "That's a lot of non-plant photos today \U0001F33f Take a break and try again tomorrow — or snap an actual plant!"
+        )
+
+
 async def identify_plant(db: AsyncSession, user: User, image_base64: str) -> IdentifyData:
-    """Order matters: plan-limit checks happen before the rate-limit check
+    """Order matters: plan-limit checks happen before the rate-limit checks
     and before the external call, so a blocked user never costs an API call
     or consumes their daily quota.
 
     check_identification_limit tells us whether this call should be
     charged against the one-time Garden Setup allowance (new upgrader
     populating an existing garden) or the regular recurring allowance —
-    see entitlement_service for why Garden Setup is tried first."""
+    see entitlement_service for why Garden Setup is tried first. That
+    allowance is only actually spent below once the result comes back and
+    turns out to be a real plant — see the log_ai_call branch."""
     try:
         await check_plant_limit(db, user)
         used_garden_setup = await check_identification_limit(db, user)
         await _check_rate_limit(db, user)
+        await _check_non_plant_abuse(db, user)
 
         result = await call_ai_identify(image_base64)
-        await log_ai_call(db, user.user_id, "garden_setup" if used_garden_setup else "identify")
+        is_real_plant = result.get("is_real_plant", True)
+        if is_real_plant:
+            await log_ai_call(db, user.user_id, "garden_setup" if used_garden_setup else "identify")
+        else:
+            # BUG-C003: deliberately NOT "identify"/"garden_setup" — a photo
+            # Gemini itself judged isn't a real plant never costs the user
+            # their real identification allowance. Still logged under its
+            # own call_type so it counts toward the general daily AI-cost
+            # safety net (_check_rate_limit, shared across every call type)
+            # and the dedicated abuse check above.
+            await log_ai_call(db, user.user_id, "identify_not_plant")
+            used_garden_setup = False  # nothing was actually drawn from either allowance
         return IdentifyData(**result, used_garden_setup=used_garden_setup)
     except AppException:
         raise

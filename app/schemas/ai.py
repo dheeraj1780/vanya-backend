@@ -25,6 +25,16 @@ class IdentifyData(BaseModel):
     # instead of the regular recurring weekly allowance — the client uses
     # this to show "Garden setup X of Y" instead of the usual weekly copy.
     used_garden_setup: bool = False
+    # BUG-C003: the old prompt forced a confident-looking species guess out
+    # of every image, including artificial plants and non-plant objects —
+    # it would "identify" a fake fern as a real one just as readily as a
+    # real one. False here means Gemini judged the photo isn't a real,
+    # living plant; the client shows fun_message as a playful pop-up
+    # instead of treating this as a normal identification. Defaults true so
+    # any identify result missing this field (shouldn't happen against the
+    # real prompt, but defensive) behaves exactly as it always has.
+    is_real_plant: bool = True
+    fun_message: Optional[str] = None
 
 
 class DiagnoseRequest(BaseModel):

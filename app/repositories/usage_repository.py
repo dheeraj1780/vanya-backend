@@ -6,7 +6,11 @@ One row is logged per successful identify/calculate/diagnose call (see
 log_ai_call in diagnosis_repository.py, which this module doesn't
 duplicate — it only adds counting queries). call_type values in use:
 "identify", "garden_setup" (a one-time-allowance identify — see
-entitlement_service.check_identification_limit), "diagnose", "calculator".
+entitlement_service.check_identification_limit), "diagnose", "calculator",
+"identify_not_plant" (an identify call that came back as not a real plant —
+see ai_service.identify_plant; counted separately so it never draws down
+the real "identify"/"garden_setup" allowances, but still counts toward the
+shared daily AI-cost safety net and its own dedicated abuse check).
 """
 from datetime import datetime, timezone
 from typing import Optional

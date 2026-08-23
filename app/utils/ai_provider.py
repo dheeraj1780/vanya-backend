@@ -47,8 +47,11 @@ def _parse_json_response(raw_text: str) -> Dict[str, Any]:
 
 
 IDENTIFY_PROMPT = (
-    "Identify this houseplant. Respond ONLY with valid JSON, no other text, in this exact "
-    'shape: {"species": string, "common_name": string, "confidence": "high"|"medium"|"low", '
+    "Identify this houseplant. First judge whether the photo actually shows a real, living plant — "
+    "not an artificial/plastic/silk plant, a toy, a drawing or photo-of-a-photo, or any non-plant "
+    "object/animal/person. Respond ONLY with valid JSON, no other text, in this exact "
+    'shape: {"is_real_plant": boolean, "fun_message": string, "species": string, "common_name": '
+    'string, "confidence": "high"|"medium"|"low", '
     '"water_frequency_days": number, "light_needs": string (max 4 words), "care_note": string '
     '(max 20 words), "fun_facts": array of 3 strings, each max 25 words, genuinely interesting '
     'and specific to this species (not generic plant-care tips), '
@@ -58,8 +61,15 @@ IDENTIFY_PROMPT = (
     'not just marketing claims), '
     '"care_difficulty": "easy"|"moderate"|"hard" (based on how forgiving the plant is of missed '
     'watering, variable light, and general neglect)}. '
-    'If you cannot identify the plant with reasonable confidence, set confidence to "low" and give '
-    'your best general guess, but still provide your best-effort values for every other field.'
+    'If is_real_plant is false: set fun_message to one short, warm, playful sentence (max 30 words) '
+    'reacting specifically to what the image actually shows (a fake plant, a mug, a cat, whatever it '
+    'is) — never scold or sound like an error message. Every other field still needs a real value '
+    '(species/common_name can name what it looks like, e.g. "Artificial fern" or "Coffee mug"; use '
+    'reasonable defaults for the rest) since the app always expects them, but the client only shows '
+    'fun_message to the user in this case. '
+    'If is_real_plant is true but you cannot identify the exact species with reasonable confidence, '
+    'set confidence to "low", leave fun_message as an empty string, and give your best general guess, '
+    'but still provide your best-effort values for every other field.'
 )
 
 
