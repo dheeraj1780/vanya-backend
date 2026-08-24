@@ -36,7 +36,10 @@ from app.utils.storage import delete_plant_photo, save_growth_background_photo, 
 # Keys the app bundles as ready-made Growth Journey background images (see
 # GrowthJourneyScreen's background picker) — an allowlist, not free-form
 # text, since this is stored and later trusted to pick an asset client-side.
-_GROWTH_BACKGROUND_PRESETS = {"pressed_journal", "golden_hour", "greenhouse", "nature_diary", "forest_dusk"}
+_GROWTH_BACKGROUND_PRESETS = {
+    "pressed_journal", "golden_hour", "greenhouse", "nature_diary", "forest_dusk",
+    "gothic", "desi_heritage", "rainforest", "ink_wash", "heirloom_tapestry",
+}
 
 
 def _to_plant_item(plant: Plant) -> PlantItem:
