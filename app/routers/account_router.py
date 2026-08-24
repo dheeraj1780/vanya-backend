@@ -51,13 +51,8 @@ async def delete_account_endpoint(
     trace_id: str = Depends(get_request_id),
 ) -> JSONResponse:
     try:
-        await delete_account(db, current_user)
-        return success_response(
-            {"message": "Account and all associated data have been permanently removed."},
-            "Account deleted successfully",
-            200,
-            trace_id,
-        )
+        data = await delete_account(db, current_user)
+        return success_response(data.model_dump(mode="json"), "Account deleted successfully", 200, trace_id)
     except AppException as exc:
         return error_response(exc.message, exc.error_code, exc.status_code, trace_id)
     except Exception as exc:

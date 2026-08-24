@@ -69,3 +69,11 @@ class PreferencesData(BaseModel):
 
 class PreferencesUpdateRequest(BaseModel):
     reminders_enabled: bool
+
+
+class DeleteAccountData(BaseModel):
+    """See account_service.ACCOUNT_RESTORE_WINDOW — how long the deleted
+    account can still be restored by signing back in with the same
+    identity, via POST /auth/restore (or explicitly abandoned early via
+    POST /auth/restart)."""
+    restorable_until: datetime

@@ -3,7 +3,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.exceptions import InternalServerError
 from app.models.user import User
 from app.repositories.user_repository import get_preference, soft_delete_user, upsert_preference
-from app.schemas.entitlement import PreferencesData
+from app.schemas.entitlement import DeleteAccountData, PreferencesData
+from app.services.auth_service import ACCOUNT_RESTORE_WINDOW
 
 
 async def get_preferences(db: AsyncSession, user: User) -> PreferencesData:
@@ -24,11 +25,17 @@ async def update_preferences(db: AsyncSession, user: User, reminders_enabled: bo
         raise InternalServerError(f"Failed to update preferences: {exc}") from exc
 
 
-async def delete_account(db: AsyncSession, user: User) -> None:
+async def delete_account(db: AsyncSession, user: User) -> DeleteAccountData:
     """Soft-deletes the account. Does NOT cancel an active App Store/Play
     subscription — that must happen through the platform's own subscription
-    management, per the OpenAPI spec's note on this endpoint."""
+    management, per the OpenAPI spec's note on this endpoint.
+
+    Reports restorable_until so the client can tell the user exactly how
+    long they have to change their mind — see auth_service.sign_in/
+    restore_account for what actually happens if they sign back in within
+    that window (or explicitly abandon it early via POST /auth/restart)."""
     try:
         await soft_delete_user(db, user)
+        return DeleteAccountData(restorable_until=user.deleted_at + ACCOUNT_RESTORE_WINDOW)
     except Exception as exc:
         raise InternalServerError(f"Failed to delete account: {exc}") from exc

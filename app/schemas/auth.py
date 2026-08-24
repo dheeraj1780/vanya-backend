@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
@@ -10,10 +11,17 @@ class SignInRequest(BaseModel):
 
 
 class SignInData(BaseModel):
-    user_id: str
-    session_token: str
-    is_new_user: bool
-    is_guest: bool
+    # "restorable": this identity deleted its account less than 24h ago —
+    # user_id/session_token are null, nothing was created or signed into.
+    # The client shows a restore-or-start-fresh choice and calls
+    # POST /auth/restore or /auth/restart with the same request instead of
+    # treating this as a completed sign-in. See auth_service.sign_in.
+    status: Literal["signed_in", "restorable"] = "signed_in"
+    user_id: Optional[str] = None
+    session_token: Optional[str] = None
+    is_new_user: bool = False
+    is_guest: bool = False
+    restorable_until: Optional[datetime] = None
 
 
 class LinkIdentityRequest(BaseModel):

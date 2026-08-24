@@ -8,7 +8,7 @@ from app.core.response import error_response, success_response
 from app.dependencies import get_current_user, get_request_id
 from app.models.user import User
 from app.schemas.auth import LinkIdentityRequest, SignInRequest
-from app.services.auth_service import link_identity, sign_in, sign_out
+from app.services.auth_service import link_identity, restart_account, restore_account, sign_in, sign_out
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
 
@@ -26,6 +26,42 @@ async def signin_endpoint(
         return error_response(exc.message, exc.error_code, exc.status_code, trace_id)
     except Exception as exc:
         return error_response(f"Unexpected error during sign-in: {exc}", "INTERNAL_SERVER_ERROR", 500, trace_id)
+
+
+@router.post("/restore")
+async def restore_endpoint(
+    request: SignInRequest,
+    db: AsyncSession = Depends(get_db),
+    trace_id: str = Depends(get_request_id),
+) -> JSONResponse:
+    """Called after /auth/signin returns status="restorable" — same
+    request body, same identity, undoes the deletion instead of creating
+    anything new."""
+    try:
+        data = await restore_account(db, request)
+        return success_response(data.model_dump(mode="json"), "Account restored successfully", 200, trace_id)
+    except AppException as exc:
+        return error_response(exc.message, exc.error_code, exc.status_code, trace_id)
+    except Exception as exc:
+        return error_response(f"Unexpected error restoring account: {exc}", "INTERNAL_SERVER_ERROR", 500, trace_id)
+
+
+@router.post("/restart")
+async def restart_endpoint(
+    request: SignInRequest,
+    db: AsyncSession = Depends(get_db),
+    trace_id: str = Depends(get_request_id),
+) -> JSONResponse:
+    """The other half of the restorable choice — explicitly gives up the
+    restore window early and starts a brand-new account under the same
+    identity."""
+    try:
+        data = await restart_account(db, request)
+        return success_response(data.model_dump(mode="json"), "New account started successfully", 200, trace_id)
+    except AppException as exc:
+        return error_response(exc.message, exc.error_code, exc.status_code, trace_id)
+    except Exception as exc:
+        return error_response(f"Unexpected error starting new account: {exc}", "INTERNAL_SERVER_ERROR", 500, trace_id)
 
 
 @router.post("/signout")
