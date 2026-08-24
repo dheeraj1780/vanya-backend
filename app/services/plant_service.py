@@ -3,7 +3,7 @@ from typing import List, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import AppException, ForbiddenError, InternalServerError, NotFoundError
+from app.core.exceptions import AppException, BadRequestError, ForbiddenError, InternalServerError, NotFoundError
 from app.models.plant import Plant
 from app.models.user import User
 from app.repositories.plant_repository import (
@@ -18,11 +18,25 @@ from app.repositories.plant_repository import (
     list_plants_by_user,
     move_to_garden as move_to_garden_repo,
     update_plant as update_plant_repo,
+    update_plant_growth_background,
     update_plant_photo,
 )
-from app.schemas.plant import GrowthMemoryInput, GrowthMemoryItem, PlantInput, PlantItem, PlantUpdateInput
+from app.schemas.plant import (
+    GrowthBackgroundData,
+    GrowthBackgroundInput,
+    GrowthMemoryInput,
+    GrowthMemoryItem,
+    PlantInput,
+    PlantItem,
+    PlantUpdateInput,
+)
 from app.services.entitlement_service import check_growth_memory_limit, check_plant_slot_limit, check_wishlist_limit
-from app.utils.storage import delete_plant_photo, save_growth_photo, save_plant_photo
+from app.utils.storage import delete_plant_photo, save_growth_background_photo, save_growth_photo, save_plant_photo
+
+# Keys the app bundles as ready-made Growth Journey background images (see
+# GrowthJourneyScreen's background picker) — an allowlist, not free-form
+# text, since this is stored and later trusted to pick an asset client-side.
+_GROWTH_BACKGROUND_PRESETS = {"pressed_journal", "golden_hour", "greenhouse", "nature_diary", "forest_dusk"}
 
 
 def _to_plant_item(plant: Plant) -> PlantItem:
@@ -42,6 +56,7 @@ def _to_plant_item(plant: Plant) -> PlantItem:
         is_air_purifying=plant.is_air_purifying,
         care_difficulty=plant.care_difficulty,
         created_at=plant.created_at,
+        growth_background=plant.growth_background,
     )
 
 
@@ -150,6 +165,10 @@ async def delete_plant(db: AsyncSession, user: User, plant_id: str) -> None:
     try:
         plant = await _get_owned_plant(db, user, plant_id)
         photo_url = plant.photo_url
+        # A custom (gallery-uploaded) growth background is a real R2/S3
+        # URL; a preset is just "preset:<key>" pointing at a bundled app
+        # asset, nothing to clean up server-side for that case.
+        background_url = plant.growth_background if plant.growth_background and not plant.growth_background.startswith("preset:") else None
         # Read before the delete — GROWTH_MEMORIES rows cascade-delete
         # with the plant (see models/plant.py's relationship config), but
         # that only removes the DB rows, not their R2/S3 objects. Grab the
@@ -160,6 +179,7 @@ async def delete_plant(db: AsyncSession, user: User, plant_id: str) -> None:
         # thing that actually matters here, and a storage hiccup shouldn't
         # block the delete. See delete_plant_photo's docstring.
         await delete_plant_photo(photo_url)
+        await delete_plant_photo(background_url)
         for url in memory_photo_urls:
             await delete_plant_photo(url)
     except AppException:
@@ -251,3 +271,37 @@ async def delete_growth_memory(db: AsyncSession, user: User, plant_id: str, memo
         raise
     except Exception as exc:
         raise InternalServerError(f"Failed to delete growth memory: {exc}") from exc
+
+
+async def set_growth_background(db: AsyncSession, user: User, plant_id: str, request: GrowthBackgroundInput) -> GrowthBackgroundData:
+    """Growth Journey's background is either one of the app's bundled
+    presets, or a photo the user picked from their own gallery — exactly
+    one of request.preset / request.image_base64, never both/neither.
+    Doesn't touch check_growth_memory_limit at all — choosing a background
+    isn't gated the way memories are, so this works even for tiers with
+    growth_memory_limit=0 (no reason a Plantie user browsing the feature
+    ahead of upgrading shouldn't get to preview a background choice)."""
+    try:
+        if bool(request.preset) == bool(request.image_base64):
+            raise BadRequestError("Provide exactly one of preset or image_base64")
+
+        plant = await _get_owned_plant(db, user, plant_id)
+        previous = plant.growth_background
+
+        if request.preset:
+            if request.preset not in _GROWTH_BACKGROUND_PRESETS:
+                raise BadRequestError(f"Unknown background preset: {request.preset}")
+            new_value = f"preset:{request.preset}"
+        else:
+            new_value = await save_growth_background_photo(request.image_base64, plant.plant_id)  # type: ignore[arg-type]
+
+        updated = await update_plant_growth_background(db, plant, new_value)
+        # Clean up whatever this replaced — but only if it was itself a
+        # custom upload (a real R2/S3 URL); a preset has no object to clean up.
+        if previous and not previous.startswith("preset:") and previous != new_value:
+            await delete_plant_photo(previous)
+        return GrowthBackgroundData(growth_background=updated.growth_background)
+    except AppException:
+        raise
+    except Exception as exc:
+        raise InternalServerError(f"Failed to set growth background: {exc}") from exc

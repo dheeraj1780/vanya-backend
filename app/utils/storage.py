@@ -56,6 +56,14 @@ async def save_growth_photo(image_base64: str, plant_id: str) -> str:
     return await _save_photo(image_base64, plant_id, folder="growth")
 
 
+async def save_growth_background_photo(image_base64: str, plant_id: str) -> str:
+    """A custom (gallery-picked) Growth Journey background — see
+    plant_service.set_growth_background. Separate key prefix from both
+    save_plant_photo and save_growth_photo since this is a different kind
+    of image (a decorative background, not a plant photo)."""
+    return await _save_photo(image_base64, plant_id, folder="growth-backgrounds")
+
+
 async def _save_photo(image_base64: str, plant_id: str, folder: str) -> str:
     try:
         try:

@@ -9,7 +9,7 @@ from app.core.exceptions import AppException
 from app.core.response import error_response, success_response
 from app.dependencies import get_current_user, get_request_id
 from app.models.user import User
-from app.schemas.plant import GrowthMemoryInput, PhotoUploadRequest, PlantInput, PlantUpdateInput
+from app.schemas.plant import GrowthBackgroundInput, GrowthMemoryInput, PhotoUploadRequest, PlantInput, PlantUpdateInput
 from app.services.ai_service import get_latest_diagnosis
 from app.services.calculator_service import compute_care_calculators, preview_location_weather
 from app.services.plant_service import (
@@ -20,6 +20,7 @@ from app.services.plant_service import (
     list_growth_memories,
     list_plants,
     move_to_garden,
+    set_growth_background,
     update_plant,
     upload_plant_photo,
 )
@@ -198,6 +199,26 @@ async def delete_growth_memory_endpoint(
         return error_response(exc.message, exc.error_code, exc.status_code, trace_id)
     except Exception as exc:
         return error_response(f"Unexpected error deleting growth memory: {exc}", "INTERNAL_SERVER_ERROR", 500, trace_id)
+
+
+@router.put("/{plant_id}/growth-background")
+async def set_growth_background_endpoint(
+    plant_id: str,
+    request: GrowthBackgroundInput,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    trace_id: str = Depends(get_request_id),
+) -> JSONResponse:
+    """Growth Journey's background — a bundled preset or a custom photo
+    from the user's own gallery. Not tier-gated (unlike growth-memories
+    above): picking a background is free to browse on any plan."""
+    try:
+        data = await set_growth_background(db, current_user, plant_id, request)
+        return success_response(data.model_dump(mode="json"), "Growth background updated successfully", 200, trace_id)
+    except AppException as exc:
+        return error_response(exc.message, exc.error_code, exc.status_code, trace_id)
+    except Exception as exc:
+        return error_response(f"Unexpected error setting growth background: {exc}", "INTERNAL_SERVER_ERROR", 500, trace_id)
 
 
 @router.get("/{plant_id}/diagnoses/latest")

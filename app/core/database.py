@@ -72,6 +72,8 @@ def _add_missing_columns(sync_conn) -> None:
             # "active" — no plant a user already owns should silently
             # vanish from their garden into an empty-string/null status.
             sync_conn.execute(text("ALTER TABLE plants ADD COLUMN status VARCHAR(10) NOT NULL DEFAULT 'active'"))
+        if "growth_background" not in existing:
+            sync_conn.execute(text("ALTER TABLE plants ADD COLUMN growth_background VARCHAR(1024)"))
 
     if "subscriptions" in table_names:
         existing = {col["name"] for col in inspector.get_columns("subscriptions")}

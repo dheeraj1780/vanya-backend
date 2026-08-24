@@ -143,6 +143,17 @@ async def update_plant_photo(db: AsyncSession, plant: Plant, photo_url: str) -> 
         raise InternalServerError(f"Failed to attach photo to plant: {exc}") from exc
 
 
+async def update_plant_growth_background(db: AsyncSession, plant: Plant, growth_background: Optional[str]) -> Plant:
+    try:
+        plant.growth_background = growth_background
+        await db.commit()
+        await db.refresh(plant)
+        return plant
+    except Exception as exc:
+        await db.rollback()
+        raise InternalServerError(f"Failed to set growth background: {exc}") from exc
+
+
 async def delete_plant(db: AsyncSession, plant: Plant) -> None:
     try:
         await db.delete(plant)  # DIAGNOSIS_LOG/GROWTH_MEMORIES rows cascade via relationship config

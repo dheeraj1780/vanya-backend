@@ -40,6 +40,12 @@ class Plant(Base):
     light_needs: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     water_frequency_days: Mapped[int] = mapped_column(Integer, default=7, nullable=False)
     photo_url: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
+    # Growth Journey's background texture for this plant — either
+    # "preset:<key>" (one of the app's bundled options, see
+    # plant_service._GROWTH_BACKGROUND_PRESETS) or a real R2/S3 URL for a
+    # custom photo the user picked from their own gallery. null = no
+    # choice made yet, client falls back to its own default.
+    growth_background: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
     fun_facts: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     last_watered_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

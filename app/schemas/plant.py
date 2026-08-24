@@ -45,6 +45,10 @@ class PlantItem(BaseModel):
     is_air_purifying: Optional[bool] = None
     care_difficulty: Optional[str] = None
     created_at: datetime
+    # "preset:<key>" (bundled app option) or a real photo URL (custom
+    # gallery pick) — null if the user hasn't chosen one yet. See
+    # plant_service._GROWTH_BACKGROUND_PRESETS for the valid preset keys.
+    growth_background: Optional[str] = None
 
     model_config = {"from_attributes": True}
 
@@ -72,3 +76,15 @@ class GrowthMemoryItem(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class GrowthBackgroundInput(BaseModel):
+    """Exactly one of these two — a bundled preset key, or a custom photo
+    from the user's own gallery. See plant_service.set_growth_background
+    for the validation/upload logic."""
+    preset: Optional[str] = None
+    image_base64: Optional[str] = None
+
+
+class GrowthBackgroundData(BaseModel):
+    growth_background: Optional[str] = None
