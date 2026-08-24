@@ -43,9 +43,18 @@ _FERTILIZER_BY_DIFFICULTY = {
     # Easier / faster-growing plants tolerate (and benefit from) more
     # frequent, stronger feeding; fussier "hard" plants get a lighter,
     # less frequent dose to avoid fertilizer burn/stress.
-    "easy": {"dilution": "1:10 (half strength)", "every_n_waterings": 2},
-    "moderate": {"dilution": "1:15 (third strength)", "every_n_waterings": 3},
-    "hard": {"dilution": "1:20 (quarter strength)", "every_n_waterings": 4},
+    #
+    # "dilution" is always parts-of-liquid-fertilizer-concentrate to
+    # parts-of-water (e.g. "1:10" = 1 part fertilizer mixed into 10 parts
+    # water) — assumes an ordinary balanced liquid houseplant fertilizer
+    # (e.g. a 10-10-10 or similar general-purpose NPK product), the kind
+    # sold for exactly this. See _compute_fertilizer's reasoning string,
+    # which spells this out for the user too, not just here for future
+    # maintainers — this was confusing enough as a bare ratio with no
+    # context that it was worth fixing on both ends.
+    "easy": {"dilution": "1:10", "every_n_waterings": 2},
+    "moderate": {"dilution": "1:15", "every_n_waterings": 3},
+    "hard": {"dilution": "1:20", "every_n_waterings": 4},
 }
 
 _LIGHT_LEVELS = {"low": 0, "medium": 1, "bright": 2, "direct": 3}
@@ -118,10 +127,19 @@ def _compute_fertilizer(plant: Plant, season: str, watering: WateringScheduleRes
     profile = _FERTILIZER_BY_DIFFICULTY.get(difficulty, _FERTILIZER_BY_DIFFICULTY["moderate"])
     frequency_days = watering.adjusted_interval_days * profile["every_n_waterings"]
 
+    # Spelled out explicitly (not just "a 1:10 feed") since a bare ratio
+    # with no context — what's being diluted into what, which fertilizer,
+    # is that ml figure raw concentrate or the mixed solution — was
+    # genuinely confusing. dilution_ratio itself stays a short "1:10" (see
+    # FertilizerResultCard, which pairs it with a "fertilizer : water"
+    # caption) so it still reads as a clean stat there; this reasoning
+    # string is where the actual explanation lives.
     reasoning = (
-        f"Based on {plant.nickname}'s '{difficulty}' care difficulty: a {profile['dilution']} feed every "
-        f"{profile['every_n_waterings']} waterings (about {frequency_days} days), mixed into a normal watering "
-        f"instead of plain water."
+        f"Based on {plant.nickname}'s '{difficulty}' care difficulty: mix {profile['dilution']} "
+        f"(fertilizer:water) using a standard balanced liquid houseplant fertilizer, then use that "
+        f"mixture in place of plain water — about {watering.recommended_amount_ml} ml, the same amount "
+        f"as a normal watering, not raw concentrate. Feed every {profile['every_n_waterings']} waterings "
+        f"(about every {frequency_days} days)."
     )
 
     return FertilizerDoseResult(

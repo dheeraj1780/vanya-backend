@@ -149,7 +149,12 @@ def _calculator_prompt(
         '"fertilizer_frequency_days": number or null, "fertilizer_reasoning": string (max 30 words), '
         '"light_fit": "ideal"|"acceptable"|"poor"|"unknown", "light_fit_reasoning": string (max 30 words)}. '
         "Base every number on this specific species' real horticultural needs and the given "
-        "conditions, not generic one-size-fits-all houseplant advice."
+        "conditions, not generic one-size-fits-all houseplant advice. "
+        'fertilizer_dilution_ratio must be a short "X:Y" ratio of parts fertilizer to parts water (e.g. '
+        '"1:10"), assuming an ordinary balanced liquid houseplant fertilizer — never a vague phrase like '
+        '"half strength" with no baseline given. fertilizer_amount_ml is the volume of the diluted '
+        "mixture to give (same idea as a normal watering amount), not raw undiluted concentrate — say so "
+        "explicitly in fertilizer_reasoning so this doesn't read as a bare, unexplained ratio."
     )
 
 
