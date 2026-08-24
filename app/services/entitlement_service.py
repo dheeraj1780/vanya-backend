@@ -25,9 +25,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.exceptions import AppException, GuestSignInRequiredError, InternalServerError, PlanLimitExceededError
 from app.core.plans import FeatureAllowance, PlanConfig, next_tier, plan_for
 from app.models.user import User
-from app.repositories.plant_repository import count_plants_by_user
+from app.repositories.plant_repository import count_growth_memories_by_user, count_plants_by_user
 from app.repositories.usage_repository import count_calls_since, oldest_call_since, utcnow
-from app.schemas.entitlement import EntitlementData, FeatureUsage, GardenSetupData, WishlistData
+from app.schemas.entitlement import EntitlementData, FeatureUsage, GardenSetupData, GrowthMemoryData, WishlistData
 
 
 def plan_for_user(user: User) -> PlanConfig:
@@ -96,6 +96,7 @@ async def get_entitlement(db: AsyncSession, user: User) -> EntitlementData:
         care_calculator = await _feature_usage(db, user, "calculator", plan.care_calculator)
         diagnose = await _feature_usage(db, user, "diagnose", plan.diagnose)
         garden_setup = await _garden_setup_status(db, user, plan)
+        growth_memory_count = await count_growth_memories_by_user(db, user.user_id)
         nxt = next_tier(plan.key)
 
         return EntitlementData(
@@ -111,6 +112,7 @@ async def get_entitlement(db: AsyncSession, user: User) -> EntitlementData:
             care_calculator=care_calculator,
             diagnose=diagnose,
             garden_setup=garden_setup,
+            growth_memories=GrowthMemoryData(count=growth_memory_count, limit=plan.growth_memory_limit),
             next_plan=nxt.key if nxt else None,
             next_plan_display_name=nxt.display_name if nxt else None,
         )
@@ -240,4 +242,38 @@ async def check_wishlist_limit(db: AsyncSession, user: User) -> None:
     raise PlanLimitExceededError(
         f"Your wishlist is full at {plan.wishlist_limit} plants. "
         f"Upgrade to {nxt.display_name} for up to {nxt.wishlist_limit} wishlist slots."
+    )
+
+
+async def check_growth_memory_limit(db: AsyncSession, user: User) -> None:
+    """Growth Journey slots — same PLANT COLLECTION RULES semantics as
+    check_plant_slot_limit: persistent, not time-based; cancelling/
+    downgrading never deletes or hides existing memories, this only
+    blocks creating new ones past the current tier's growth_memory_limit.
+    limit=0 (Guest/Plantie) means the feature isn't available at all, not
+    merely "used up" — worded differently from the exhausted case below."""
+    plan = plan_for_user(user)
+    if plan.growth_memory_limit < 0:  # UNLIMITED
+        return
+    if plan.growth_memory_limit == 0:
+        if user.is_guest:
+            raise GuestSignInRequiredError(
+                "Growth Journey is a Green Thumb feature. Sign in, then upgrade, to start tracking a plant's growth over time."
+            )
+        nxt = next_tier(plan.key)
+        next_phrase = f" Upgrade to {nxt.display_name} to unlock it." if nxt else ""
+        raise PlanLimitExceededError(f"Growth Journey isn't available on {plan.display_name}.{next_phrase}")
+
+    current_count = await count_growth_memories_by_user(db, user.user_id)
+    if current_count < plan.growth_memory_limit:
+        return
+
+    # Only Green Thumb (limit=1) reaches here today — Guest/Plantie are
+    # caught above, Photosynthesis PhD is unlimited.
+    nxt = next_tier(plan.key)
+    if nxt is None:
+        raise PlanLimitExceededError("You've used your one-time Green Thumb growth memory.")
+    nxt_phrase = "unlimited memories" if nxt.growth_memory_limit < 0 else f"up to {nxt.growth_memory_limit} memories"
+    raise PlanLimitExceededError(
+        f"You've used your one-time Green Thumb growth memory. Upgrade to {nxt.display_name} for {nxt_phrase}."
     )

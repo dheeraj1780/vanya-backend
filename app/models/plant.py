@@ -57,6 +57,7 @@ class Plant(Base):
     )
 
     diagnoses: Mapped[list["DiagnosisLog"]] = relationship(back_populates="plant", cascade="all, delete-orphan")
+    growth_memories: Mapped[list["GrowthMemory"]] = relationship(back_populates="plant", cascade="all, delete-orphan")
 
 
 class DiagnosisLog(Base):
@@ -73,6 +74,28 @@ class DiagnosisLog(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
 
     plant: Mapped["Plant"] = relationship(back_populates="diagnoses")
+
+
+class GrowthMemory(Base):
+    """One dated, named photo in a plant's growth timeline — the
+    Photosynthesis PhD (unlimited) / Green Thumb (one-time, see
+    plans.py's growth_memory_limit) feature. Works identically for
+    wishlist plants too — nothing here or in plant_service checks
+    Plant.status, same as diagnoses/photos."""
+
+    __tablename__ = "growth_memories"
+
+    memory_id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    plant_id: Mapped[str] = mapped_column(String(36), ForeignKey("plants.plant_id"), index=True, nullable=False)
+    # Denormalized so check_growth_memory_limit's count is a single-table
+    # scan — same reasoning as DiagnosisLog.user_id.
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.user_id"), index=True, nullable=False)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    photo_url: Mapped[str] = mapped_column(String(1024), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+
+    plant: Mapped["Plant"] = relationship(back_populates="growth_memories")
 
 
 class AiCallLog(Base):

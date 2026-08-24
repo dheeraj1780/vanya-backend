@@ -34,6 +34,15 @@ class WishlistData(BaseModel):
     limit: int
 
 
+class GrowthMemoryData(BaseModel):
+    """Growth Journey usage — see entitlement_service.check_growth_memory_limit
+    and plans.py's GROWTH JOURNEY note. Persistent like plant_count/plant_limit
+    (limit=0 means the current tier doesn't have the feature at all;
+    limit=-1 means unlimited, see plans.UNLIMITED)."""
+    count: int
+    limit: int
+
+
 class EntitlementData(BaseModel):
     plan: Literal["guest", "plantie", "green_thumb", "photosynthesis_phd"]
     plan_display_name: str
@@ -47,6 +56,7 @@ class EntitlementData(BaseModel):
     care_calculator: FeatureUsage
     diagnose: FeatureUsage
     garden_setup: GardenSetupData
+    growth_memories: GrowthMemoryData
     # The next tier up, for "upgrade to X for Y" prompts — null at the top
     # tier (Photosynthesis PhD has nowhere further to go at launch).
     next_plan: Optional[str] = None

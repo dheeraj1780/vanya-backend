@@ -46,6 +46,17 @@ def _get_s3_client():
 
 async def save_plant_photo(image_base64: str, plant_id: str) -> str:
     """Decodes and saves a base64 image, returning its publicly accessible URL."""
+    return await _save_photo(image_base64, plant_id, folder="plants")
+
+
+async def save_growth_photo(image_base64: str, plant_id: str) -> str:
+    """Same as save_plant_photo, but keyed under its own "growth/" prefix
+    (S3 backend only — see _save_to_s3) so a plant's growth-timeline
+    photos stay organized separately from its single current photo_url."""
+    return await _save_photo(image_base64, plant_id, folder="growth")
+
+
+async def _save_photo(image_base64: str, plant_id: str, folder: str) -> str:
     try:
         try:
             raw_bytes = base64.b64decode(image_base64, validate=True)
@@ -56,7 +67,7 @@ async def save_plant_photo(image_base64: str, plant_id: str) -> str:
             raise PayloadTooLargeError("Image exceeds the maximum allowed size (5MB)")
 
         if settings.storage_backend == "s3":
-            return await _save_to_s3(raw_bytes, plant_id)
+            return await _save_to_s3(raw_bytes, plant_id, folder)
         if settings.storage_backend == "local":
             return await _save_to_local_disk(raw_bytes, plant_id)
 
@@ -64,7 +75,7 @@ async def save_plant_photo(image_base64: str, plant_id: str) -> str:
     except (BadRequestError, PayloadTooLargeError, InternalServerError):
         raise
     except Exception as exc:
-        raise InternalServerError(f"Failed to save plant photo: {exc}") from exc
+        raise InternalServerError(f"Failed to save photo: {exc}") from exc
 
 
 async def _save_to_local_disk(raw_bytes: bytes, plant_id: str) -> str:
@@ -112,8 +123,8 @@ async def delete_plant_photo(photo_url: Optional[str]) -> None:
         pass
 
 
-async def _save_to_s3(raw_bytes: bytes, plant_id: str) -> str:
-    key = f"plants/{plant_id}-{uuid.uuid4().hex[:8]}.jpg"
+async def _save_to_s3(raw_bytes: bytes, plant_id: str, folder: str = "plants") -> str:
+    key = f"{folder}/{plant_id}-{uuid.uuid4().hex[:8]}.jpg"
 
     def _put():
         _get_s3_client().put_object(

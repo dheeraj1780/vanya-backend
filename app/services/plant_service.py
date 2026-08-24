@@ -8,17 +8,21 @@ from app.models.plant import Plant
 from app.models.user import User
 from app.repositories.plant_repository import (
     count_plants_by_user,
+    create_growth_memory as create_growth_memory_repo,
     create_plant as create_plant_repo,
+    delete_growth_memory as delete_growth_memory_repo,
     delete_plant as delete_plant_repo,
+    get_growth_memory_by_id,
     get_plant_by_id,
+    list_growth_memories as list_growth_memories_repo,
     list_plants_by_user,
     move_to_garden as move_to_garden_repo,
     update_plant as update_plant_repo,
     update_plant_photo,
 )
-from app.schemas.plant import PlantInput, PlantItem, PlantUpdateInput
-from app.services.entitlement_service import check_plant_slot_limit, check_wishlist_limit
-from app.utils.storage import delete_plant_photo, save_plant_photo
+from app.schemas.plant import GrowthMemoryInput, GrowthMemoryItem, PlantInput, PlantItem, PlantUpdateInput
+from app.services.entitlement_service import check_growth_memory_limit, check_plant_slot_limit, check_wishlist_limit
+from app.utils.storage import delete_plant_photo, save_growth_photo, save_plant_photo
 
 
 def _to_plant_item(plant: Plant) -> PlantItem:
@@ -146,11 +150,18 @@ async def delete_plant(db: AsyncSession, user: User, plant_id: str) -> None:
     try:
         plant = await _get_owned_plant(db, user, plant_id)
         photo_url = plant.photo_url
+        # Read before the delete — GROWTH_MEMORIES rows cascade-delete
+        # with the plant (see models/plant.py's relationship config), but
+        # that only removes the DB rows, not their R2/S3 objects. Grab the
+        # URLs first so there's still something to clean up after.
+        memory_photo_urls = [m.photo_url for m in await list_growth_memories_repo(db, plant_id)]
         await delete_plant_repo(db, plant)
         # After the DB row is gone, not before — the plant record is the
         # thing that actually matters here, and a storage hiccup shouldn't
         # block the delete. See delete_plant_photo's docstring.
         await delete_plant_photo(photo_url)
+        for url in memory_photo_urls:
+            await delete_plant_photo(url)
     except AppException:
         raise
     except Exception as exc:
@@ -179,3 +190,64 @@ async def get_plant_for_user(db: AsyncSession, user: User, plant_id: str) -> Pla
     """Exposed for ai_service, which needs the ORM row (for .species) rather
     than the API-facing PlantItem schema."""
     return await _get_owned_plant(db, user, plant_id)
+
+
+def _to_growth_memory_item(memory) -> GrowthMemoryItem:
+    return GrowthMemoryItem(
+        id=memory.memory_id,
+        plant_id=memory.plant_id,
+        name=memory.name,
+        note=memory.note,
+        photo_url=memory.photo_url,
+        created_at=memory.created_at,
+    )
+
+
+async def list_growth_memories(db: AsyncSession, user: User, plant_id: str) -> List[GrowthMemoryItem]:
+    """Works identically for wishlist plants — _get_owned_plant doesn't
+    check status, same as every other plant-scoped read/write here."""
+    try:
+        await _get_owned_plant(db, user, plant_id)  # ownership check, raises 403/404 as needed
+        memories = await list_growth_memories_repo(db, plant_id)
+        return [_to_growth_memory_item(m) for m in memories]
+    except AppException:
+        raise
+    except Exception as exc:
+        raise InternalServerError(f"Failed to list growth memories: {exc}") from exc
+
+
+async def create_growth_memory(db: AsyncSession, user: User, plant_id: str, request: GrowthMemoryInput) -> GrowthMemoryItem:
+    try:
+        plant = await _get_owned_plant(db, user, plant_id)
+        # Checked before the (real, storage-costing) photo upload, same
+        # ordering principle as check_plant_limit before an AI identify
+        # call — a blocked user never costs an upload.
+        await check_growth_memory_limit(db, user)
+        photo_url = await save_growth_photo(request.image_base64, plant.plant_id)
+        memory = await create_growth_memory_repo(
+            db, plant_id=plant.plant_id, user_id=user.user_id, name=request.name, note=request.note, photo_url=photo_url
+        )
+        return _to_growth_memory_item(memory)
+    except AppException:
+        raise
+    except Exception as exc:
+        raise InternalServerError(f"Failed to create growth memory: {exc}") from exc
+
+
+async def delete_growth_memory(db: AsyncSession, user: User, plant_id: str, memory_id: str) -> None:
+    try:
+        await _get_owned_plant(db, user, plant_id)  # ownership check on the plant
+        memory = await get_growth_memory_by_id(db, memory_id)
+        if memory is None or memory.plant_id != plant_id:
+            raise NotFoundError("Growth memory not found")
+        if memory.user_id != user.user_id:
+            raise ForbiddenError("You do not have permission to delete this memory")
+        photo_url = memory.photo_url
+        await delete_growth_memory_repo(db, memory)
+        # Same ordering as delete_plant: DB row gone first (that's the
+        # part that matters to the user), storage cleanup best-effort after.
+        await delete_plant_photo(photo_url)
+    except AppException:
+        raise
+    except Exception as exc:
+        raise InternalServerError(f"Failed to delete growth memory: {exc}") from exc

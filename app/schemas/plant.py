@@ -55,3 +55,20 @@ class PhotoUploadRequest(BaseModel):
 
 class PhotoUploadData(BaseModel):
     photo_url: str
+
+
+class GrowthMemoryInput(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    note: Optional[str] = Field(default=None, max_length=500)
+    image_base64: str
+
+
+class GrowthMemoryItem(BaseModel):
+    id: str
+    plant_id: str
+    name: str
+    note: Optional[str] = None
+    photo_url: str
+    created_at: datetime
+
+    model_config = {"from_attributes": True}

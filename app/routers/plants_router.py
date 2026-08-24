@@ -9,10 +9,20 @@ from app.core.exceptions import AppException
 from app.core.response import error_response, success_response
 from app.dependencies import get_current_user, get_request_id
 from app.models.user import User
-from app.schemas.plant import PhotoUploadRequest, PlantInput, PlantUpdateInput
+from app.schemas.plant import GrowthMemoryInput, PhotoUploadRequest, PlantInput, PlantUpdateInput
 from app.services.ai_service import get_latest_diagnosis
 from app.services.calculator_service import compute_care_calculators, preview_location_weather
-from app.services.plant_service import create_plant, delete_plant, list_plants, move_to_garden, update_plant, upload_plant_photo
+from app.services.plant_service import (
+    create_growth_memory,
+    create_plant,
+    delete_growth_memory,
+    delete_plant,
+    list_growth_memories,
+    list_plants,
+    move_to_garden,
+    update_plant,
+    upload_plant_photo,
+)
 
 router = APIRouter(prefix="/plants", tags=["Plants"])
 
@@ -132,6 +142,62 @@ async def upload_plant_photo_endpoint(
         return error_response(exc.message, exc.error_code, exc.status_code, trace_id)
     except Exception as exc:
         return error_response(f"Unexpected error uploading photo: {exc}", "INTERNAL_SERVER_ERROR", 500, trace_id)
+
+
+@router.get("/{plant_id}/growth-memories")
+async def list_growth_memories_endpoint(
+    plant_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    trace_id: str = Depends(get_request_id),
+) -> JSONResponse:
+    """Growth Journey — dated, named photo memories on a plant's growth
+    timeline. Green Thumb-and-up feature (see plans.py's GROWTH JOURNEY
+    note); works for wishlist plants too, same as every other plant-scoped
+    endpoint here."""
+    try:
+        memories = await list_growth_memories(db, current_user, plant_id)
+        return success_response(
+            {"memories": [m.model_dump(mode="json") for m in memories]}, "Growth memories retrieved successfully", 200, trace_id
+        )
+    except AppException as exc:
+        return error_response(exc.message, exc.error_code, exc.status_code, trace_id)
+    except Exception as exc:
+        return error_response(f"Unexpected error listing growth memories: {exc}", "INTERNAL_SERVER_ERROR", 500, trace_id)
+
+
+@router.post("/{plant_id}/growth-memories")
+async def create_growth_memory_endpoint(
+    plant_id: str,
+    request: GrowthMemoryInput,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    trace_id: str = Depends(get_request_id),
+) -> JSONResponse:
+    try:
+        memory = await create_growth_memory(db, current_user, plant_id, request)
+        return success_response(memory.model_dump(mode="json"), "Growth memory saved successfully", 201, trace_id)
+    except AppException as exc:
+        return error_response(exc.message, exc.error_code, exc.status_code, trace_id)
+    except Exception as exc:
+        return error_response(f"Unexpected error saving growth memory: {exc}", "INTERNAL_SERVER_ERROR", 500, trace_id)
+
+
+@router.delete("/{plant_id}/growth-memories/{memory_id}")
+async def delete_growth_memory_endpoint(
+    plant_id: str,
+    memory_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    trace_id: str = Depends(get_request_id),
+) -> JSONResponse:
+    try:
+        await delete_growth_memory(db, current_user, plant_id, memory_id)
+        return success_response({"message": "Growth memory deleted."}, "Growth memory deleted successfully", 200, trace_id)
+    except AppException as exc:
+        return error_response(exc.message, exc.error_code, exc.status_code, trace_id)
+    except Exception as exc:
+        return error_response(f"Unexpected error deleting growth memory: {exc}", "INTERNAL_SERVER_ERROR", 500, trace_id)
 
 
 @router.get("/{plant_id}/diagnoses/latest")

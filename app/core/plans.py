@@ -51,6 +51,16 @@ plant always costs one identification-allowance use regardless of which
 list it lands in; moving a wishlist plant into the active garden later
 costs a plant slot but NOT a second identification (see
 plant_service.move_to_garden).
+
+GROWTH JOURNEY: dated, named photo memories on a plant's growth timeline
+(models.GrowthMemory) — a Green Thumb-and-up feature, gated by
+growth_memory_limit, not available to Guest/Plantie at all (0). Green
+Thumb's limit is deliberately 1 — a one-time taste of the feature (same
+one-time spirit as garden_setup_identifications) rather than a real
+ongoing timeline, which needs Photosynthesis PhD's unlimited allowance to
+actually be useful. Same PLANT COLLECTION RULES semantics as max_plants:
+cancelling a subscription never deletes or hides existing memories, it
+only blocks creating new ones past whatever the current tier allows.
 """
 from dataclasses import dataclass
 from typing import Dict, Literal, Optional
@@ -84,6 +94,14 @@ class PlanConfig:
     identification: FeatureAllowance
     care_calculator: FeatureAllowance
     diagnose: FeatureAllowance
+    # Growth Journey — persistent slots for dated photo memories on a
+    # plant's growth timeline, same PLANT COLLECTION RULES semantics as
+    # max_plants (a downgrade never deletes/hides existing memories, only
+    # blocks creating new ones past this count — see
+    # entitlement_service.check_growth_memory_limit). 0 = tier doesn't get
+    # the feature at all. Green Thumb's 1 is deliberately a one-time taste
+    # of the feature, not a real timeline — see plans.py's TIER LADDER note.
+    growth_memory_limit: int
     # Razorpay Plan ID (Subscriptions > Plans in the Razorpay dashboard).
     # None for the two free tiers, which are never purchased — Plantie is
     # granted automatically on sign-in, Guest requires no purchase at all.
@@ -104,6 +122,7 @@ PLANS: Dict[str, PlanConfig] = {
         identification=FeatureAllowance(3, "lifetime"),
         care_calculator=FeatureAllowance(3, "lifetime"),
         diagnose=FeatureAllowance(1, "lifetime"),
+        growth_memory_limit=0,
     ),
     "plantie": PlanConfig(
         key="plantie",
@@ -118,6 +137,7 @@ PLANS: Dict[str, PlanConfig] = {
         identification=FeatureAllowance(3, "weekly"),
         care_calculator=FeatureAllowance(3, "weekly"),
         diagnose=FeatureAllowance(1, "monthly"),
+        growth_memory_limit=0,
     ),
     "green_thumb": PlanConfig(
         key="green_thumb",
@@ -132,6 +152,7 @@ PLANS: Dict[str, PlanConfig] = {
         identification=FeatureAllowance(7, "weekly"),
         care_calculator=FeatureAllowance(7, "weekly"),
         diagnose=FeatureAllowance(2, "monthly"),
+        growth_memory_limit=1,
         razorpay_plan_id="plan_TRk4u6iPqBbxmL",
     ),
     "photosynthesis_phd": PlanConfig(
@@ -147,6 +168,7 @@ PLANS: Dict[str, PlanConfig] = {
         identification=FeatureAllowance(10, "weekly"),
         care_calculator=FeatureAllowance(20, "weekly"),
         diagnose=FeatureAllowance(5, "monthly"),
+        growth_memory_limit=UNLIMITED,
         razorpay_plan_id="plan_TRk5QYflkJTWAp",
     ),
 }

@@ -5,7 +5,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import InternalServerError
-from app.models.plant import Plant
+from app.models.plant import GrowthMemory, Plant
 
 
 async def list_plants_by_user(
@@ -145,8 +145,65 @@ async def update_plant_photo(db: AsyncSession, plant: Plant, photo_url: str) -> 
 
 async def delete_plant(db: AsyncSession, plant: Plant) -> None:
     try:
-        await db.delete(plant)  # DIAGNOSIS_LOG rows cascade via relationship config
+        await db.delete(plant)  # DIAGNOSIS_LOG/GROWTH_MEMORIES rows cascade via relationship config
         await db.commit()
     except Exception as exc:
         await db.rollback()
         raise InternalServerError(f"Failed to delete plant: {exc}") from exc
+
+
+# ---- Growth memories (Photosynthesis PhD / one-time Green Thumb feature) ----
+
+
+async def list_growth_memories(db: AsyncSession, plant_id: str) -> List[GrowthMemory]:
+    try:
+        result = await db.execute(
+            select(GrowthMemory).where(GrowthMemory.plant_id == plant_id).order_by(GrowthMemory.created_at.asc())
+        )
+        return list(result.scalars().all())
+    except Exception as exc:
+        raise InternalServerError(f"Failed to list growth memories: {exc}") from exc
+
+
+async def get_growth_memory_by_id(db: AsyncSession, memory_id: str) -> Optional[GrowthMemory]:
+    try:
+        result = await db.execute(select(GrowthMemory).where(GrowthMemory.memory_id == memory_id))
+        return result.scalar_one_or_none()
+    except Exception as exc:
+        raise InternalServerError(f"Failed to fetch growth memory: {exc}") from exc
+
+
+async def count_growth_memories_by_user(db: AsyncSession, user_id: str) -> int:
+    """Persistent count, not a recurring credit — same PLANT COLLECTION
+    RULES reasoning as count_plants_by_user: a downgrade never deletes or
+    hides existing memories, entitlement_service.check_growth_memory_limit
+    only uses this to block *creating new ones* past the current tier's
+    growth_memory_limit."""
+    try:
+        result = await db.execute(select(func.count(GrowthMemory.memory_id)).where(GrowthMemory.user_id == user_id))
+        return result.scalar_one()
+    except Exception as exc:
+        raise InternalServerError(f"Failed to count growth memories: {exc}") from exc
+
+
+async def create_growth_memory(
+    db: AsyncSession, plant_id: str, user_id: str, name: str, note: Optional[str], photo_url: str
+) -> GrowthMemory:
+    try:
+        memory = GrowthMemory(plant_id=plant_id, user_id=user_id, name=name, note=note, photo_url=photo_url)
+        db.add(memory)
+        await db.commit()
+        await db.refresh(memory)
+        return memory
+    except Exception as exc:
+        await db.rollback()
+        raise InternalServerError(f"Failed to create growth memory: {exc}") from exc
+
+
+async def delete_growth_memory(db: AsyncSession, memory: GrowthMemory) -> None:
+    try:
+        await db.delete(memory)
+        await db.commit()
+    except Exception as exc:
+        await db.rollback()
+        raise InternalServerError(f"Failed to delete growth memory: {exc}") from exc
