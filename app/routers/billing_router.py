@@ -5,7 +5,7 @@ from typing import Optional
 
 from app.core.database import get_db
 from app.core.exceptions import AppException
-from app.core.response import error_response, success_response
+from app.core.response import error_response, success_response, unexpected_error_response
 from app.dependencies import get_current_user, get_request_id
 from app.models.user import User
 from app.schemas.billing import CreateSubscriptionRequest
@@ -32,7 +32,7 @@ async def create_subscription_endpoint(
     except AppException as exc:
         return error_response(exc.message, exc.error_code, exc.status_code, trace_id)
     except Exception as exc:
-        return error_response(f"Unexpected error creating subscription: {exc}", "INTERNAL_SERVER_ERROR", 500, trace_id)
+        return unexpected_error_response("creating subscription", exc, trace_id)
 
 
 @router.post("/billing/razorpay/cancel-subscription")
@@ -49,7 +49,7 @@ async def cancel_subscription_endpoint(
     except AppException as exc:
         return error_response(exc.message, exc.error_code, exc.status_code, trace_id)
     except Exception as exc:
-        return error_response(f"Unexpected error cancelling subscription: {exc}", "INTERNAL_SERVER_ERROR", 500, trace_id)
+        return unexpected_error_response("cancelling subscription", exc, trace_id)
 
 
 @router.get("/billing/subscription-status")
@@ -68,7 +68,7 @@ async def subscription_status_endpoint(
     except AppException as exc:
         return error_response(exc.message, exc.error_code, exc.status_code, trace_id)
     except Exception as exc:
-        return error_response(f"Unexpected error fetching subscription status: {exc}", "INTERNAL_SERVER_ERROR", 500, trace_id)
+        return unexpected_error_response("fetching subscription status", exc, trace_id)
 
 
 @router.post("/webhooks/razorpay")
@@ -90,4 +90,4 @@ async def razorpay_webhook_endpoint(
     except AppException as exc:
         return error_response(exc.message, exc.error_code, exc.status_code, trace_id)
     except Exception as exc:
-        return error_response(f"Unexpected error processing Razorpay webhook: {exc}", "INTERNAL_SERVER_ERROR", 500, trace_id)
+        return unexpected_error_response("processing Razorpay webhook", exc, trace_id)

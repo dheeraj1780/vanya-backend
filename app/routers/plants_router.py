@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.exceptions import AppException
-from app.core.response import error_response, success_response
+from app.core.response import error_response, success_response, unexpected_error_response
 from app.dependencies import get_current_user, get_request_id
 from app.models.user import User
 from app.schemas.plant import GrowthBackgroundInput, GrowthMemoryInput, PhotoUploadRequest, PlantInput, PlantUpdateInput
@@ -48,7 +48,7 @@ async def list_plants_endpoint(
     except AppException as exc:
         return error_response(exc.message, exc.error_code, exc.status_code, trace_id)
     except Exception as exc:
-        return error_response(f"Unexpected error listing plants: {exc}", "INTERNAL_SERVER_ERROR", 500, trace_id)
+        return unexpected_error_response("listing plants", exc, trace_id)
 
 
 @router.post("")
@@ -69,7 +69,7 @@ async def create_plant_endpoint(
     except AppException as exc:
         return error_response(exc.message, exc.error_code, exc.status_code, trace_id)
     except Exception as exc:
-        return error_response(f"Unexpected error creating plant: {exc}", "INTERNAL_SERVER_ERROR", 500, trace_id)
+        return unexpected_error_response("creating plant", exc, trace_id)
 
 
 @router.put("/{plant_id}")
@@ -86,7 +86,7 @@ async def update_plant_endpoint(
     except AppException as exc:
         return error_response(exc.message, exc.error_code, exc.status_code, trace_id)
     except Exception as exc:
-        return error_response(f"Unexpected error updating plant: {exc}", "INTERNAL_SERVER_ERROR", 500, trace_id)
+        return unexpected_error_response("updating plant", exc, trace_id)
 
 
 @router.post("/{plant_id}/move-to-garden")
@@ -104,7 +104,7 @@ async def move_to_garden_endpoint(
     except AppException as exc:
         return error_response(exc.message, exc.error_code, exc.status_code, trace_id)
     except Exception as exc:
-        return error_response(f"Unexpected error moving plant to garden: {exc}", "INTERNAL_SERVER_ERROR", 500, trace_id)
+        return unexpected_error_response("moving plant to garden", exc, trace_id)
 
 
 @router.delete("/{plant_id}")
@@ -125,7 +125,7 @@ async def delete_plant_endpoint(
     except AppException as exc:
         return error_response(exc.message, exc.error_code, exc.status_code, trace_id)
     except Exception as exc:
-        return error_response(f"Unexpected error deleting plant: {exc}", "INTERNAL_SERVER_ERROR", 500, trace_id)
+        return unexpected_error_response("deleting plant", exc, trace_id)
 
 
 @router.post("/{plant_id}/photo")
@@ -142,7 +142,7 @@ async def upload_plant_photo_endpoint(
     except AppException as exc:
         return error_response(exc.message, exc.error_code, exc.status_code, trace_id)
     except Exception as exc:
-        return error_response(f"Unexpected error uploading photo: {exc}", "INTERNAL_SERVER_ERROR", 500, trace_id)
+        return unexpected_error_response("uploading photo", exc, trace_id)
 
 
 @router.get("/{plant_id}/growth-memories")
@@ -164,7 +164,7 @@ async def list_growth_memories_endpoint(
     except AppException as exc:
         return error_response(exc.message, exc.error_code, exc.status_code, trace_id)
     except Exception as exc:
-        return error_response(f"Unexpected error listing growth memories: {exc}", "INTERNAL_SERVER_ERROR", 500, trace_id)
+        return unexpected_error_response("listing growth memories", exc, trace_id)
 
 
 @router.post("/{plant_id}/growth-memories")
@@ -181,7 +181,7 @@ async def create_growth_memory_endpoint(
     except AppException as exc:
         return error_response(exc.message, exc.error_code, exc.status_code, trace_id)
     except Exception as exc:
-        return error_response(f"Unexpected error saving growth memory: {exc}", "INTERNAL_SERVER_ERROR", 500, trace_id)
+        return unexpected_error_response("saving growth memory", exc, trace_id)
 
 
 @router.delete("/{plant_id}/growth-memories/{memory_id}")
@@ -198,7 +198,7 @@ async def delete_growth_memory_endpoint(
     except AppException as exc:
         return error_response(exc.message, exc.error_code, exc.status_code, trace_id)
     except Exception as exc:
-        return error_response(f"Unexpected error deleting growth memory: {exc}", "INTERNAL_SERVER_ERROR", 500, trace_id)
+        return unexpected_error_response("deleting growth memory", exc, trace_id)
 
 
 @router.put("/{plant_id}/growth-background")
@@ -218,7 +218,7 @@ async def set_growth_background_endpoint(
     except AppException as exc:
         return error_response(exc.message, exc.error_code, exc.status_code, trace_id)
     except Exception as exc:
-        return error_response(f"Unexpected error setting growth background: {exc}", "INTERNAL_SERVER_ERROR", 500, trace_id)
+        return unexpected_error_response("setting growth background", exc, trace_id)
 
 
 @router.get("/{plant_id}/diagnoses/latest")
@@ -237,7 +237,7 @@ async def get_latest_diagnosis_endpoint(
     except AppException as exc:
         return error_response(exc.message, exc.error_code, exc.status_code, trace_id)
     except Exception as exc:
-        return error_response(f"Unexpected error fetching latest diagnosis: {exc}", "INTERNAL_SERVER_ERROR", 500, trace_id)
+        return unexpected_error_response("fetching latest diagnosis", exc, trace_id)
 
 
 @router.get("/weather-preview")
@@ -256,7 +256,7 @@ async def get_weather_preview_endpoint(
     except AppException as exc:
         return error_response(exc.message, exc.error_code, exc.status_code, trace_id)
     except Exception as exc:
-        return error_response(f"Unexpected error resolving location weather: {exc}", "INTERNAL_SERVER_ERROR", 500, trace_id)
+        return unexpected_error_response("resolving location weather", exc, trace_id)
 
 
 @router.get("/{plant_id}/calculators")
@@ -281,4 +281,4 @@ async def get_care_calculators_endpoint(
     except AppException as exc:
         return error_response(exc.message, exc.error_code, exc.status_code, trace_id)
     except Exception as exc:
-        return error_response(f"Unexpected error computing care calculators: {exc}", "INTERNAL_SERVER_ERROR", 500, trace_id)
+        return unexpected_error_response("computing care calculators", exc, trace_id)

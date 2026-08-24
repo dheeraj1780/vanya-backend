@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Tuple
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -28,12 +28,26 @@ ACCOUNT_RESTORE_WINDOW = timedelta(hours=24)
 
 
 def _utcnow() -> datetime:
-    # Naive UTC, matching User.deleted_at (see soft_delete_user's
-    # docstring on why this codebase stays naive throughout rather than
-    # timezone-aware — SQLite doesn't round-trip tzinfo, so comparing an
-    # aware "now" against a value read back from the DB raises "can't
-    # compare offset-naive and offset-aware datetimes").
+    # Naive UTC — this codebase writes every timestamp as naive UTC (see
+    # soft_delete_user), so comparisons here need to match that.
     return datetime.utcnow()
+
+
+def _naive_utc(dt: Optional[datetime]) -> Optional[datetime]:
+    """Normalizes a datetime that may or may not carry tzinfo to naive UTC
+    before any arithmetic/comparison against _utcnow(). This is required
+    because a DB-read value's awareness depends on the *dialect*, not on
+    anything this app controls: SQLite never round-trips tzinfo (a value
+    written as naive UTC reads back naive), while Postgres's
+    DateTime(timezone=True) columns (every timestamp column in this schema
+    uses that) round-trip as timezone-aware UTC. Comparing a fresh
+    datetime.utcnow() against a DB-read value that's sometimes aware and
+    sometimes not is exactly what raised "can't compare offset-naive and
+    offset-aware datetimes" against production Postgres — this makes every
+    such comparison safe regardless of which DB is behind it."""
+    if dt is None or dt.tzinfo is None:
+        return dt
+    return dt.astimezone(timezone.utc).replace(tzinfo=None)
 
 
 async def _resolve_identity(request: SignInRequest) -> Tuple[str, Optional[str]]:
@@ -81,8 +95,9 @@ async def sign_in(db: AsyncSession, request: SignInRequest) -> SignInData:
         # No active account under this identity — check for one recently
         # deleted before creating a brand-new one.
         deleted = await get_user_by_provider_id_including_deleted(db, request.provider, provider_id)
-        if deleted is not None and deleted.deleted_at is not None:
-            restorable_until = deleted.deleted_at + ACCOUNT_RESTORE_WINDOW
+        deleted_at = _naive_utc(deleted.deleted_at) if deleted is not None else None
+        if deleted_at is not None:
+            restorable_until = deleted_at + ACCOUNT_RESTORE_WINDOW
             if _utcnow() < restorable_until:
                 return SignInData(status="restorable", restorable_until=restorable_until)
             # Window's closed — free the identity now so create_user below
@@ -108,9 +123,10 @@ async def restore_account(db: AsyncSession, request: SignInRequest) -> SignInDat
     try:
         provider_id, _ = await _resolve_identity(request)
         deleted = await get_user_by_provider_id_including_deleted(db, request.provider, provider_id)
-        if deleted is None or deleted.deleted_at is None:
+        deleted_at = _naive_utc(deleted.deleted_at) if deleted is not None else None
+        if deleted_at is None:
             raise NotFoundError("No recently-deleted account found for this identity")
-        if _utcnow() >= deleted.deleted_at + ACCOUNT_RESTORE_WINDOW:
+        if _utcnow() >= deleted_at + ACCOUNT_RESTORE_WINDOW:
             raise BadRequestError("The 24-hour restore window for this account has passed")
         restored = await restore_user(db, deleted)
         return _session_for(restored, is_new_user=False)

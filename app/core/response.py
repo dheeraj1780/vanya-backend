@@ -8,9 +8,12 @@ Routers must always return via success_response()/error_response() below —
 never build a raw dict — so the envelope can never silently drift between
 endpoints.
 """
+import logging
 from typing import Any, Optional
 
 from fastapi.responses import JSONResponse
+
+logger = logging.getLogger("plant_companion")
 
 
 def success_response(
@@ -48,6 +51,21 @@ def error_response(
         "error": error_code,
     }
     return JSONResponse(status_code=status_code, content=body)
+
+
+def unexpected_error_response(context: str, exc: Exception, trace_id: str = "") -> JSONResponse:
+    """Every router's outer `except Exception` should call this instead of
+    building an error_response(f"...: {exc}", ...) by hand — that pattern
+    puts the raw exception text (SQL, stack detail, internal paths) straight
+    into the client-visible response, exactly what InternalServerError
+    (core/exceptions.py) and main.py's last-resort handler already fix for
+    every *other* failure path. This closes the same gap here: the real
+    detail is logged server-side only, the client gets the same generic,
+    safe message every genuinely-unexpected 500 already returns.
+    `context` is a short phrase for the *server-side* log line only, e.g.
+    "sign-in" — never shown to the client."""
+    logger.error(f"Unexpected error during {context}: {exc}", exc_info=exc)
+    return error_response("Something went wrong on our end. Please try again.", "INTERNAL_SERVER_ERROR", 500, trace_id)
 
 
 def get_trace_id(request_id_header: Optional[str]) -> str:

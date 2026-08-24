@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.exceptions import AppException
-from app.core.response import error_response, success_response
+from app.core.response import error_response, success_response, unexpected_error_response
 from app.dependencies import get_current_user, get_request_id
 from app.models.user import User
 from app.schemas.auth import LinkIdentityRequest, SignInRequest
@@ -25,7 +25,7 @@ async def signin_endpoint(
     except AppException as exc:
         return error_response(exc.message, exc.error_code, exc.status_code, trace_id)
     except Exception as exc:
-        return error_response(f"Unexpected error during sign-in: {exc}", "INTERNAL_SERVER_ERROR", 500, trace_id)
+        return unexpected_error_response("sign-in", exc, trace_id)
 
 
 @router.post("/restore")
@@ -43,7 +43,7 @@ async def restore_endpoint(
     except AppException as exc:
         return error_response(exc.message, exc.error_code, exc.status_code, trace_id)
     except Exception as exc:
-        return error_response(f"Unexpected error restoring account: {exc}", "INTERNAL_SERVER_ERROR", 500, trace_id)
+        return unexpected_error_response("restoring account", exc, trace_id)
 
 
 @router.post("/restart")
@@ -61,7 +61,7 @@ async def restart_endpoint(
     except AppException as exc:
         return error_response(exc.message, exc.error_code, exc.status_code, trace_id)
     except Exception as exc:
-        return error_response(f"Unexpected error starting new account: {exc}", "INTERNAL_SERVER_ERROR", 500, trace_id)
+        return unexpected_error_response("starting new account", exc, trace_id)
 
 
 @router.post("/signout")
@@ -76,7 +76,7 @@ async def signout_endpoint(
     except AppException as exc:
         return error_response(exc.message, exc.error_code, exc.status_code, trace_id)
     except Exception as exc:
-        return error_response(f"Unexpected error during sign-out: {exc}", "INTERNAL_SERVER_ERROR", 500, trace_id)
+        return unexpected_error_response("sign-out", exc, trace_id)
 
 
 @router.post("/link")
@@ -92,4 +92,4 @@ async def link_endpoint(
     except AppException as exc:
         return error_response(exc.message, exc.error_code, exc.status_code, trace_id)
     except Exception as exc:
-        return error_response(f"Unexpected error while linking account: {exc}", "INTERNAL_SERVER_ERROR", 500, trace_id)
+        return unexpected_error_response("linking account", exc, trace_id)
