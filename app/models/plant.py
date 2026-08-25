@@ -47,6 +47,15 @@ class Plant(Base):
     # choice made yet, client falls back to its own default.
     growth_background: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
     fun_facts: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    # E-MP001: household/vernacular names this plant commonly goes by in
+    # Indian homes (e.g. "Money Plant", "Paisa Paudha" for Epipremnum
+    # aureum) — alongside the botanical species name, not instead of it.
+    # Empty/null when the AI genuinely couldn't identify a distinct one
+    # rather than inventing something. See ai_provider.IDENTIFY_PROMPT.
+    regional_names: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    # E-MP002: a plain-language soil recommendation for this species, e.g.
+    # "Well-draining potting mix with perlite and compost."
+    soil_type: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     last_watered_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 

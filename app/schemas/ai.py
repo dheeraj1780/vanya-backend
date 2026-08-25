@@ -15,7 +15,15 @@ class IdentifyData(BaseModel):
     water_frequency_days: int
     light_needs: str
     care_note: str
-    fun_facts: List[str] = Field(max_length=3)
+    fun_facts: List[str] = Field(max_length=4)
+    # E-MP001: common household/vernacular names this plant goes by in
+    # Indian homes, alongside (not instead of) common_name/species — e.g.
+    # "Money Plant" / "Paisa Paudha" for Epipremnum aureum. Empty when the
+    # AI has no genuine distinct one rather than inventing something.
+    regional_names: List[str] = Field(default_factory=list, max_length=4)
+    # E-MP002: a plain-language soil recommendation, e.g. "Well-draining
+    # potting mix with perlite and compost."
+    soil_type: str = ""
     is_indoor: bool
     is_pet_safe: bool
     is_air_purifying: bool
