@@ -53,9 +53,12 @@ class Plant(Base):
     # Empty/null when the AI genuinely couldn't identify a distinct one
     # rather than inventing something. See ai_provider.IDENTIFY_PROMPT.
     regional_names: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
-    # E-MP002: a plain-language soil recommendation for this species, e.g.
-    # "Well-draining potting mix with perlite and compost."
+    # E-MP002: a named soil type (e.g. "Red soil", "Black soil", "Sandy
+    # loam", "Well-draining potting mix"), not a vague description.
     soil_type: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    # What to mix into soil_type for this species specifically — e.g. "Add
+    # compost, sand and cocopeat for drainage and moisture retention."
+    soil_amendments: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     last_watered_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 

@@ -78,6 +78,8 @@ def _add_missing_columns(sync_conn) -> None:
             sync_conn.execute(text("ALTER TABLE plants ADD COLUMN regional_names JSON"))
         if "soil_type" not in existing:
             sync_conn.execute(text("ALTER TABLE plants ADD COLUMN soil_type VARCHAR(255)"))
+        if "soil_amendments" not in existing:
+            sync_conn.execute(text("ALTER TABLE plants ADD COLUMN soil_amendments VARCHAR(255)"))
 
     if "subscriptions" in table_names:
         existing = {col["name"] for col in inspector.get_columns("subscriptions")}

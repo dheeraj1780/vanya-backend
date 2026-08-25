@@ -13,6 +13,7 @@ class PlantInput(BaseModel):
     fun_facts: Optional[List[str]] = Field(default=None, max_length=4)
     regional_names: Optional[List[str]] = Field(default=None, max_length=4)
     soil_type: Optional[str] = None
+    soil_amendments: Optional[str] = None
     notes: Optional[str] = None
     is_indoor: Optional[bool] = None
     is_pet_safe: Optional[bool] = None
@@ -44,6 +45,7 @@ class PlantItem(BaseModel):
     fun_facts: List[str] = Field(default_factory=list)
     regional_names: List[str] = Field(default_factory=list)
     soil_type: Optional[str] = None
+    soil_amendments: Optional[str] = None
     is_indoor: Optional[bool] = None
     is_pet_safe: Optional[bool] = None
     is_air_purifying: Optional[bool] = None

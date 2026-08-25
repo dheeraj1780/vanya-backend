@@ -21,9 +21,10 @@ class IdentifyData(BaseModel):
     # "Money Plant" / "Paisa Paudha" for Epipremnum aureum. Empty when the
     # AI has no genuine distinct one rather than inventing something.
     regional_names: List[str] = Field(default_factory=list, max_length=4)
-    # E-MP002: a plain-language soil recommendation, e.g. "Well-draining
-    # potting mix with perlite and compost."
+    # E-MP002: a named soil type (e.g. "Red soil", "Black soil", "Sandy
+    # loam"), not a vague description — plus what to mix into it.
     soil_type: str = ""
+    soil_amendments: str = ""
     is_indoor: bool
     is_pet_safe: bool
     is_air_purifying: bool
