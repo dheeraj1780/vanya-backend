@@ -50,22 +50,24 @@ def _naive_utc(dt: Optional[datetime]) -> Optional[datetime]:
     return dt.astimezone(timezone.utc).replace(tzinfo=None)
 
 
-async def _resolve_identity(request: SignInRequest) -> Tuple[str, Optional[str]]:
+async def _resolve_identity(request: SignInRequest) -> Tuple[str, Optional[str], Optional[str]]:
     """Shared by sign_in/restore_account/restart_account — verifies the
     Firebase ID token (covers Google, Apple, and any other provider
     enabled in the Firebase console) or accepts a guest device_uuid with
     no external call at all. Firebase's UID is stable per project
     regardless of which underlying provider was used, so it's stored
-    directly as provider_id."""
+    directly as provider_id. `name` is only ever populated for firebase
+    (see verify_firebase_id_token's docstring on Apple's first-sign-in-only
+    quirk) — guests have no identity to pull one from."""
     if request.provider == "firebase":
         if not request.identity_token:
             raise BadRequestError("identity_token is required for provider=firebase")
         verified = await verify_firebase_id_token(request.identity_token)
-        return verified["provider_id"], verified["email"]
+        return verified["provider_id"], verified["email"], verified.get("name")
     else:  # guest
         if not request.device_uuid:
             raise BadRequestError("device_uuid is required for provider=guest")
-        return request.device_uuid, None
+        return request.device_uuid, None, None
 
 
 def _session_for(user: User, is_new_user: bool) -> SignInData:
@@ -86,7 +88,7 @@ async def sign_in(db: AsyncSession, request: SignInRequest) -> SignInData:
     to show a restore-or-start-fresh choice and call POST /auth/restore or
     POST /auth/restart with the same request — see those functions below."""
     try:
-        provider_id, email = await _resolve_identity(request)
+        provider_id, email, name = await _resolve_identity(request)
 
         existing = await get_user_by_provider_id(db, request.provider, provider_id)
         if existing:
@@ -104,7 +106,7 @@ async def sign_in(db: AsyncSession, request: SignInRequest) -> SignInData:
             # doesn't collide with this now-permanently-gone row.
             await finalize_deletion(db, deleted)
 
-        new_user = await create_user(db, request.provider, provider_id, email, request.provider == "guest")
+        new_user = await create_user(db, request.provider, provider_id, email, request.provider == "guest", name=name)
         return _session_for(new_user, is_new_user=True)
     except (BadRequestError,):
         raise
@@ -121,7 +123,7 @@ async def restore_account(db: AsyncSession, request: SignInRequest) -> SignInDat
     there's nothing restorable (already restored, window closed, or this
     identity was never deleted) rather than silently no-op'ing."""
     try:
-        provider_id, _ = await _resolve_identity(request)
+        provider_id, _, _ = await _resolve_identity(request)
         deleted = await get_user_by_provider_id_including_deleted(db, request.provider, provider_id)
         deleted_at = _naive_utc(deleted.deleted_at) if deleted is not None else None
         if deleted_at is None:
@@ -143,11 +145,11 @@ async def restart_account(db: AsyncSession, request: SignInRequest) -> SignInDat
     after the window's already closed on its own; finalize_deletion is
     idempotent."""
     try:
-        provider_id, email = await _resolve_identity(request)
+        provider_id, email, name = await _resolve_identity(request)
         deleted = await get_user_by_provider_id_including_deleted(db, request.provider, provider_id)
         if deleted is not None and deleted.deleted_at is not None:
             await finalize_deletion(db, deleted)
-        new_user = await create_user(db, request.provider, provider_id, email, request.provider == "guest")
+        new_user = await create_user(db, request.provider, provider_id, email, request.provider == "guest", name=name)
         return _session_for(new_user, is_new_user=True)
     except AppException:
         raise
@@ -175,7 +177,13 @@ async def link_identity(db: AsyncSession, current_user: User, identity_token: st
         if conflicting and conflicting.user_id != current_user.user_id:
             raise IdentityAlreadyLinkedError("This account is already linked to a different user")
 
-        updated = await link_identity_repo(db, current_user, "firebase", provider_id, email)
+        # A guest linking their first real identity is effectively that
+        # account's first-ever sign-in — the same "capture once" moment as
+        # a brand-new create_user, just arriving via a different path. Only
+        # fills in a name the account doesn't already have (e.g. one set
+        # manually via PUT /users/preferences) — never overwrites it.
+        name = verified.get("name") if current_user.name is None else None
+        updated = await link_identity_repo(db, current_user, "firebase", provider_id, email, name)
         return LinkIdentityData(user_id=updated.user_id, is_guest=updated.is_guest)
     except (IdentityAlreadyLinkedError,):
         raise

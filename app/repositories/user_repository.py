@@ -45,9 +45,11 @@ async def get_user_by_id(db: AsyncSession, user_id: str) -> Optional[User]:
         raise InternalServerError(f"Failed to fetch user: {exc}") from exc
 
 
-async def create_user(db: AsyncSession, provider: str, provider_id: str, email: Optional[str], is_guest: bool) -> User:
+async def create_user(
+    db: AsyncSession, provider: str, provider_id: str, email: Optional[str], is_guest: bool, name: Optional[str] = None
+) -> User:
     try:
-        user = User(provider=provider, provider_id=provider_id, email=email, is_guest=is_guest)
+        user = User(provider=provider, provider_id=provider_id, email=email, is_guest=is_guest, name=name)
         db.add(user)
         await db.flush()
         # A brand-new user should always start with default preferences.
@@ -91,12 +93,16 @@ async def create_user(db: AsyncSession, provider: str, provider_id: str, email: 
         raise InternalServerError(f"Failed to create user: {exc}") from exc
 
 
-async def link_identity(db: AsyncSession, user: User, provider: str, provider_id: str, email: Optional[str]) -> User:
+async def link_identity(
+    db: AsyncSession, user: User, provider: str, provider_id: str, email: Optional[str], name: Optional[str] = None
+) -> User:
     try:
         user.provider = provider
         user.provider_id = provider_id
         if email:
             user.email = email
+        if name:
+            user.name = name
         user.is_guest = False
         await db.commit()
         await db.refresh(user)

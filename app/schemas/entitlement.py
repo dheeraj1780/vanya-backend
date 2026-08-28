@@ -65,10 +65,18 @@ class EntitlementData(BaseModel):
 
 class PreferencesData(BaseModel):
     reminders_enabled: bool
+    # Display name — see User.name's docstring on how/when it's captured.
+    # None means nothing captured yet (common for Apple, always for a
+    # never-linked guest) — the client falls back to a name-less greeting.
+    name: Optional[str] = None
 
 
 class PreferencesUpdateRequest(BaseModel):
     reminders_enabled: bool
+    # null/omitted leaves the stored name untouched; "" clears it back to
+    # None; anything else replaces it (trimmed, capped at 100 chars
+    # server-side) — see account_service.update_preferences.
+    name: Optional[str] = None
 
 
 class DeleteAccountData(BaseModel):

@@ -64,6 +64,8 @@ def _add_missing_columns(sync_conn) -> None:
         existing = {col["name"] for col in inspector.get_columns("users")}
         if "subscription_product_id" not in existing:
             sync_conn.execute(text("ALTER TABLE users ADD COLUMN subscription_product_id VARCHAR(255)"))
+        if "name" not in existing:
+            sync_conn.execute(text("ALTER TABLE users ADD COLUMN name VARCHAR(100)"))
 
     if "plants" in table_names:
         existing = {col["name"] for col in inspector.get_columns("plants")}

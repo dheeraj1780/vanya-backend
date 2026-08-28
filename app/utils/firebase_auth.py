@@ -57,7 +57,15 @@ def _get_firebase_app() -> firebase_admin.App:
 
 async def verify_firebase_id_token(id_token: str) -> Dict[str, Any]:
     """Returns {"provider_id": <firebase uid>, "email": <email or None>,
-    "sign_in_provider": "google.com" | "apple.com" | ...}.
+    "name": <display name or None>, "sign_in_provider": "google.com" |
+    "apple.com" | ...}.
+
+    "name" comes from the token's own "name" claim — Google always
+    includes one; Apple only includes it on that identity's very first
+    Sign in with Apple ever (and only if the person didn't choose to hide
+    their name), so it's frequently None for Apple even on a real,
+    named account. Callers should treat a missing name as "nothing to
+    capture", not an error.
 
     firebase_admin.auth.verify_id_token is synchronous (it's a thin wrapper
     over Google's own token verification, not an I/O-bound network call on
@@ -71,6 +79,7 @@ async def verify_firebase_id_token(id_token: str) -> Dict[str, Any]:
         return {
             "provider_id": decoded["uid"],
             "email": decoded.get("email"),
+            "name": decoded.get("name"),
             "sign_in_provider": decoded.get("firebase", {}).get("sign_in_provider", "unknown"),
         }
     except ExternalProviderError:

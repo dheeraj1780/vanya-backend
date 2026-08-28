@@ -24,6 +24,14 @@ class User(Base):
     provider: Mapped[str] = mapped_column(String(20), nullable=False)  # apple | google | guest
     provider_id: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
     email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    # Captured from the Firebase ID token's "name" claim at account-creation
+    # time ONLY (Google always sends one; Apple only on that identity's
+    # very first-ever Sign in with Apple, and only if not hidden — a real
+    # platform quirk, not a bug here). Never auto-overwritten on later
+    # sign-ins, so a manual edit via PUT /users/preferences always wins —
+    # see auth_service.sign_in's is_new_user branch and
+    # account_service.update_preferences.
+    name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     is_guest: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     token_version: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 

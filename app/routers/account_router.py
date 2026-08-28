@@ -36,7 +36,7 @@ async def update_preferences_endpoint(
     trace_id: str = Depends(get_request_id),
 ) -> JSONResponse:
     try:
-        data = await update_preferences(db, current_user, request.reminders_enabled)
+        data = await update_preferences(db, current_user, request.reminders_enabled, request.name)
         return success_response(data.model_dump(mode="json"), "Preferences updated successfully", 200, trace_id)
     except AppException as exc:
         return error_response(exc.message, exc.error_code, exc.status_code, trace_id)
