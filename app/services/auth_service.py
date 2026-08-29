@@ -173,9 +173,32 @@ async def link_identity(db: AsyncSession, current_user: User, identity_token: st
         verified = await verify_firebase_id_token(identity_token)
         provider_id, email = verified["provider_id"], verified["email"]
 
-        conflicting = await get_user_by_provider_id(db, "firebase", provider_id)
+        # BUG this fixed ("something went wrong" trying to link an account
+        # deleted less than 24h ago): this used to look up only *active*
+        # identities (get_user_by_provider_id, which filters deleted_at IS
+        # NULL). A deleted-but-still-restorable row keeps occupying the
+        # same (provider, provider_id) unique slot in the DB — invisible to
+        # that check, so nothing here caught the conflict, and
+        # link_identity_repo's write below hit a raw IntegrityError that
+        # got wrapped into a generic InternalServerError instead of the
+        # proper IDENTITY_ALREADY_LINKED the client already knows how to
+        # handle. Looking up *including* deleted mirrors what sign_in()
+        # above already does for the same identity, and handles it the
+        # same two ways: still within the 24h window -> surface as a
+        # conflict too (the client's existing "already registered" dialog
+        # -> switchToExistingAccount -> /auth/signin correctly detects
+        # "restorable" and offers restore-or-start-fresh); window closed ->
+        # free the identity (finalize_deletion) so the link below succeeds
+        # normally instead of colliding with a permanently-gone row.
+        conflicting = await get_user_by_provider_id_including_deleted(db, "firebase", provider_id)
         if conflicting and conflicting.user_id != current_user.user_id:
-            raise IdentityAlreadyLinkedError("This account is already linked to a different user")
+            if conflicting.deleted_at is not None:
+                deleted_at = _naive_utc(conflicting.deleted_at)
+                if _utcnow() < deleted_at + ACCOUNT_RESTORE_WINDOW:
+                    raise IdentityAlreadyLinkedError("This account is already registered — sign in to restore it")
+                await finalize_deletion(db, conflicting)
+            else:
+                raise IdentityAlreadyLinkedError("This account is already linked to a different user")
 
         # A guest linking their first real identity is effectively that
         # account's first-ever sign-in — the same "capture once" moment as

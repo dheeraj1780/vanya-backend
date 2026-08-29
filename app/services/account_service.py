@@ -26,7 +26,11 @@ async def update_preferences(db: AsyncSession, user: User, reminders_enabled: bo
         # ORM object here so upsert_preference's own commit picks up both
         # changes in the same transaction — no separate commit needed.
         if name is not None:
-            user.name = name.strip()[:100] or None
+            # Cap matches the client's TextField maxLength (settings_screen.dart's
+            # _editName) — was 100, trimmed to 50 as a more realistic real-name
+            # length; kept in sync here as a server-side backstop regardless of
+            # what any client sends.
+            user.name = name.strip()[:50] or None
         pref = await upsert_preference(db, user.user_id, reminders_enabled)
         return PreferencesData(reminders_enabled=pref.reminders_enabled, name=user.name)
     except Exception as exc:
