@@ -47,9 +47,11 @@ def _parse_json_response(raw_text: str) -> Dict[str, Any]:
 
 
 IDENTIFY_PROMPT = (
-    "Identify this houseplant. First judge whether the photo actually shows a real, living plant — "
-    "not an artificial/plastic/silk plant, a toy, a drawing or photo-of-a-photo, or any non-plant "
-    "object/animal/person. Respond ONLY with valid JSON, no other text, in this exact "
+    "Identify this houseplant. First judge whether the photo actually shows a real, living, growing "
+    "plant — not an artificial/plastic/silk plant, a toy, a drawing or photo-of-a-photo, harvested "
+    "produce on its own (a cut fruit or vegetable with no leaves/stem/growing plant visible — e.g. a "
+    "banana or tomato sitting on a counter is food, not a photo of the plant it grew on), or any other "
+    "non-plant object/animal/person. Respond ONLY with valid JSON, no other text, in this exact "
     'shape: {"is_real_plant": boolean, "fun_message": string, "species": string, "common_name": '
     'string, "regional_names": array of up to 4 strings, "confidence": "high"|"medium"|"low", '
     '"water_frequency_days": number, "light_needs": string (max 4 words), "care_note": string '
@@ -62,6 +64,10 @@ IDENTIFY_PROMPT = (
     'not just marketing claims), '
     '"care_difficulty": "easy"|"moderate"|"hard" (based on how forgiving the plant is of missed '
     'watering, variable light, and general neglect)}. '
+    'Every free-text field (fun_message, care_note, soil_amendments, fun_facts) must be written for a '
+    'total beginner with zero botany background — plain everyday words, no unexplained Latin or '
+    'technical jargon, nothing generic ("water regularly") — someone who has never grown a plant before '
+    'should immediately understand every sentence. '
     'regional_names: this app\'s users are mostly in India — list the common household/vernacular '
     'names this plant actually goes by there (Hindi and other widely-used regional names), e.g. '
     '"Money Plant"/"Paisa Paudha" for Epipremnum aureum, "Tulsi" for holy basil, "Kadi Patta" for '
@@ -77,15 +83,12 @@ IDENTIFY_PROMPT = (
     'e.g. "Add compost, sand and cocopeat for drainage and moisture retention" or "Mix in perlite and '
     'organic manure". Practical and specific to this plant\'s actual needs (drainage, moisture '
     'retention, nutrients, pH), not generic filler. '
-    'fun_facts: write for a total beginner with no botany background — plain everyday language, no '
-    'unexplained Latin/technical jargon, nothing generic ("water regularly") — genuinely specific and '
-    'interesting facts about this exact species. '
     'If is_real_plant is false: set fun_message to one short, warm, playful sentence (max 30 words) '
-    'reacting specifically to what the image actually shows (a fake plant, a mug, a cat, whatever it '
-    'is) — never scold or sound like an error message. Every other field still needs a real value '
-    '(species/common_name can name what it looks like, e.g. "Artificial fern" or "Coffee mug"; use '
-    'reasonable defaults for the rest, regional_names can be empty) since the app always expects them, '
-    'but the client only shows fun_message to the user in this case. '
+    'reacting specifically to what the image actually shows (a fake plant, a mug, a cut banana, '
+    'whatever it is) — never scold or sound like an error message. Every other field still needs a '
+    'real value (species/common_name can name what it looks like, e.g. "Artificial fern" or "Banana '
+    '(fruit, not the plant)"; use reasonable defaults for the rest, regional_names can be empty) since '
+    'the app always expects them, but the client only shows fun_message to the user in this case. '
     'If is_real_plant is true but you cannot identify the exact species with reasonable confidence, '
     'set confidence to "low", leave fun_message as an empty string, and give your best general guess, '
     'but still provide your best-effort values for every other field.'
@@ -119,7 +122,10 @@ def _diagnose_prompt(species: str) -> str:
         '{"confidence": "high"|"medium"|"low", "likely_causes": [string, string] (max 2, ranked '
         'most to least likely), "recommended_action": string (max 30 words), "urgency": '
         '"low"|"medium"|"high"}. Never give a single overconfident answer when symptoms are '
-        'ambiguous — list the top 2 causes if uncertain.'
+        'ambiguous — list the top 2 causes if uncertain. Write likely_causes and recommended_action '
+        'for a total beginner with zero botany background — plain everyday words, no unexplained '
+        'Latin or technical jargon (say "yellowing leaves from too much water" not "chlorosis from '
+        'overwatering").'
     )
 
 
@@ -169,6 +175,8 @@ def _calculator_prompt(
         '"light_fit": "ideal"|"acceptable"|"poor"|"unknown", "light_fit_reasoning": string (max 30 words)}. '
         "Base every number on this specific species' real horticultural needs and the given "
         "conditions, not generic one-size-fits-all houseplant advice. "
+        "Write watering_reasoning, fertilizer_reasoning, and light_fit_reasoning for a total beginner "
+        "with zero botany background — plain everyday words, no unexplained Latin or technical jargon. "
         'fertilizer_dilution_ratio must be a short "X:Y" ratio of parts fertilizer to parts water (e.g. '
         '"1:10"), assuming an ordinary balanced liquid houseplant fertilizer — never a vague phrase like '
         '"half strength" with no baseline given. fertilizer_amount_ml is the volume of the diluted '
