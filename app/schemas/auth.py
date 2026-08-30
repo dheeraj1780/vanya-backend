@@ -31,3 +31,9 @@ class LinkIdentityRequest(BaseModel):
 class LinkIdentityData(BaseModel):
     user_id: str
     is_guest: bool
+
+
+class WebHandoffTokenData(BaseModel):
+    # A short-lived Firebase custom token, single-use in practice — see
+    # auth_service.create_web_handoff_token and firebase_auth.mint_custom_token.
+    custom_token: str

@@ -16,8 +16,8 @@ from app.repositories.user_repository import (
     link_identity as link_identity_repo,
     restore_user,
 )
-from app.schemas.auth import LinkIdentityData, SignInData, SignInRequest
-from app.utils.firebase_auth import verify_firebase_id_token
+from app.schemas.auth import LinkIdentityData, SignInData, SignInRequest, WebHandoffTokenData
+from app.utils.firebase_auth import mint_custom_token, verify_firebase_id_token
 
 # How long a deleted account can still be restored by signing back in with
 # the same identity — see account_service.delete_account (which reports
@@ -155,6 +155,26 @@ async def restart_account(db: AsyncSession, request: SignInRequest) -> SignInDat
         raise
     except Exception as exc:
         raise InternalServerError(f"Starting a new account failed: {exc}") from exc
+
+
+async def create_web_handoff_token(user: User) -> WebHandoffTokenData:
+    """See firebase_auth.mint_custom_token's docstring for the full "why".
+    Guests have no Firebase identity at all (provider == "guest",
+    provider_id is this app's own locally-generated device UUID, not a
+    real Firebase uid) — PaywallScreen already hides the "Continue on
+    vanya.app" button for guests (they see "Sign in first" instead), so
+    reaching here as a guest would be a client bug, not a real user flow;
+    guarded anyway rather than minting a token for a uid that doesn't
+    correspond to any actual Firebase user."""
+    if user.is_guest:
+        raise BadRequestError("Sign in with Google or Apple first, then try again.")
+    try:
+        token = mint_custom_token(user.provider_id)
+        return WebHandoffTokenData(custom_token=token)
+    except AppException:
+        raise
+    except Exception as exc:
+        raise InternalServerError(f"Failed to create web handoff token: {exc}") from exc
 
 
 async def sign_out(db: AsyncSession, user: User) -> None:

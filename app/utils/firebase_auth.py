@@ -94,3 +94,28 @@ async def verify_firebase_id_token(id_token: str) -> Dict[str, Any]:
         raise ExternalProviderError(f"Could not fetch Firebase's public keys: {exc}") from exc
     except Exception as exc:
         raise IdentityTokenInvalidError(f"Firebase ID token could not be verified: {exc}") from exc
+
+
+def mint_custom_token(uid: str) -> str:
+    """Mints a short-lived Firebase custom token for `uid` — used to hand a
+    signed-in app user off to the VANYA website (see PaywallScreen's
+    "Continue on vanya.app") already signed into the SAME Firebase account,
+    instead of landing on a bare browser sign-in picker where it's easy to
+    tap a different Google account by mistake and end up subscribing on the
+    wrong one. The website consumes it once via signInWithCustomToken and
+    immediately strips it from the URL (see AuthContext.tsx there) —
+    Firebase custom tokens are meant to be minted and used right away, not
+    stored or reused.
+
+    Synchronous for the same reason verify_firebase_id_token is: the Admin
+    SDK signs this locally with the service account's private key, no
+    network round-trip.
+    """
+    try:
+        app = _get_firebase_app()
+        token_bytes = firebase_auth_sdk.create_custom_token(uid, app=app)
+        return token_bytes.decode("utf-8")
+    except ExternalProviderError:
+        raise
+    except Exception as exc:
+        raise ExternalProviderError(f"Could not create a web sign-in handoff token: {exc}") from exc

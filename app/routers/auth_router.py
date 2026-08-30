@@ -8,7 +8,7 @@ from app.core.response import error_response, success_response, unexpected_error
 from app.dependencies import get_current_user, get_request_id
 from app.models.user import User
 from app.schemas.auth import LinkIdentityRequest, SignInRequest
-from app.services.auth_service import link_identity, restart_account, restore_account, sign_in, sign_out
+from app.services.auth_service import create_web_handoff_token, link_identity, restart_account, restore_account, sign_in, sign_out
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
 
@@ -77,6 +77,24 @@ async def signout_endpoint(
         return error_response(exc.message, exc.error_code, exc.status_code, trace_id)
     except Exception as exc:
         return unexpected_error_response("sign-out", exc, trace_id)
+
+
+@router.post("/web-handoff-token")
+async def web_handoff_token_endpoint(
+    current_user: User = Depends(get_current_user),
+    trace_id: str = Depends(get_request_id),
+) -> JSONResponse:
+    """PaywallScreen's "Continue on vanya.app" calls this right before
+    opening the website, so the browser signs in as the SAME account
+    automatically instead of showing a bare picker a user could easily
+    tap the wrong Google account in — see auth_service.create_web_handoff_token."""
+    try:
+        data = await create_web_handoff_token(current_user)
+        return success_response(data.model_dump(mode="json"), "Web handoff token created successfully", 200, trace_id)
+    except AppException as exc:
+        return error_response(exc.message, exc.error_code, exc.status_code, trace_id)
+    except Exception as exc:
+        return unexpected_error_response("creating web handoff token", exc, trace_id)
 
 
 @router.post("/link")
