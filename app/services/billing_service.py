@@ -31,7 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.core.exceptions import AppException, BadRequestError, InternalServerError, InvalidSignatureError, NotFoundError
-from app.core.plans import PLANS, RAZORPAY_PLAN_ID_TO_PLAN
+from app.core.plans import PLANS, RAZORPAY_PLAN_ID_TO_PLAN, plan_rank
 from app.models.user import User
 from app.repositories.billing_repository import (
     create_webhook_event,
@@ -40,11 +40,11 @@ from app.repositories.billing_repository import (
     upsert_subscription,
 )
 from app.repositories.user_repository import get_user_by_id, update_subscription_status
-from app.schemas.billing import CreateSubscriptionData, SubscriptionStatusData
+from app.schemas.billing import ChangePlanData, CreateSubscriptionData, SubscriptionStatusData
 from app.services.entitlement_service import plan_for_user
 from app.utils.razorpay_client import cancel_subscription as razorpay_cancel_subscription
 from app.utils.razorpay_client import create_subscription as razorpay_create_subscription
-from app.utils.razorpay_client import status_for, verify_webhook_signature
+from app.utils.razorpay_client import status_for, update_subscription_plan as razorpay_update_subscription_plan, verify_webhook_signature
 
 settings = get_settings()
 
@@ -61,6 +61,71 @@ async def create_subscription(db: AsyncSession, user: User, plan_key: str) -> Cr
         raise
     except Exception as exc:
         raise InternalServerError(f"Failed to create Razorpay subscription: {exc}") from exc
+
+
+async def change_plan(db: AsyncSession, user: User, new_plan_key: str) -> ChangePlanData:
+    """Downgrade from one active paid tier to a cheaper one (e.g.
+    Photosynthesis PhD -> Green Thumb) — immediate feature change, no
+    refund, existing data untouched. Deliberately NOT a general
+    "change plan" (upgrades still go through create_subscription's normal
+    Checkout flow, since collecting more money needs a real payment step;
+    this only ever moves a user to something cheaper).
+
+    Two independent things happen, on purpose:
+    1. Razorpay's own subscription is told to change plan at the END of
+       the current cycle (razorpay_update_subscription_plan, schedule_
+       change_at="cycle_end") — the cycle already paid for at the higher
+       price keeps running unchanged, so there's nothing to refund; only
+       the NEXT renewal bills at the new lower price.
+    2. This backend's own DB flips subscription_product_id to the new
+       plan RIGHT NOW, independent of Razorpay's schedule — so
+       plan_for_user (and every entitlement check) reflects the lower
+       tier's limits immediately, per the product decision that a
+       downgrade's *feature* change shouldn't wait for the next billing
+       cycle even though the *price* change does. This is the one place
+       outside the webhook allowed to touch subscription_product_id — see
+       the module docstring's trust boundary — because it can only ever
+       move a user to something they already verified-paid for at least
+       as much as (a cheaper plan), never grant anything new.
+
+    Existing plants/growth memories over the new lower limit are never
+    touched — same PLANT COLLECTION RULES principle as everywhere else
+    (see plans.py): limits only ever block *creating new* things past the
+    cap, never delete/hide what's already there.
+    """
+    try:
+        new_plan = PLANS.get(new_plan_key)
+        if new_plan is None or new_plan.razorpay_plan_id is None:
+            raise BadRequestError(f"'{new_plan_key}' is not a purchasable plan")
+
+        current_plan = plan_for_user(user)
+        if plan_rank(new_plan_key) >= plan_rank(current_plan.key):
+            raise BadRequestError(
+                f"{new_plan.display_name} isn't a downgrade from {current_plan.display_name} — "
+                "to upgrade, subscribe to it from the plans page instead."
+            )
+
+        sub = await get_subscription_by_user(db, user.user_id)
+        if sub is None or not sub.provider_subscription_id:
+            raise NotFoundError("No active subscription found for this account")
+
+        await razorpay_update_subscription_plan(sub.provider_subscription_id, new_plan.razorpay_plan_id, schedule_change_at="cycle_end")
+
+        # Mirrors the webhook's own write pattern (status/expires_at stay
+        # exactly as they were — this isn't a status change) but flips the
+        # plan association immediately, both on SUBSCRIPTIONS and the
+        # denormalized USERS columns.
+        await upsert_subscription(db, user.user_id, new_plan.razorpay_plan_id, sub.status, sub.expires_at, sub.provider_subscription_id)
+        await update_subscription_status(db, user, user.subscription_status, user.subscription_expires_at, new_plan.razorpay_plan_id)
+
+        return ChangePlanData(
+            plan=new_plan.key,
+            message=f"You're on {new_plan.display_name} now. Your next bill will reflect the new price.",
+        )
+    except AppException:
+        raise
+    except Exception as exc:
+        raise InternalServerError(f"Failed to change plan: {exc}") from exc
 
 
 async def cancel_subscription(db: AsyncSession, user: User) -> None:

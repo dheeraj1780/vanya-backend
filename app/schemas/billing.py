@@ -21,6 +21,19 @@ class CreateSubscriptionData(BaseModel):
     razorpay_key_id: str
 
 
+class ChangePlanRequest(BaseModel):
+    """Downgrade only — from one active paid tier to a cheaper one, e.g.
+    Photosynthesis PhD -> Green Thumb. See billing_service.change_plan for
+    why upgrades don't use this (they need to actually collect more money,
+    so they go through the normal create-subscription + Checkout flow)."""
+    plan: Literal["green_thumb", "photosynthesis_phd"]
+
+
+class ChangePlanData(BaseModel):
+    plan: str
+    message: str
+
+
 class SubscriptionStatusData(BaseModel):
     """Read-only status check — the website polls this right after
     Checkout.js reports success, since the webhook (the actual source of

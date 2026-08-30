@@ -92,6 +92,34 @@ async def cancel_subscription(subscription_id: str, cancel_at_cycle_end: bool = 
         raise ExternalProviderError(f"Razorpay subscription cancellation request failed: {exc}") from exc
 
 
+async def update_subscription_plan(subscription_id: str, new_plan_id: str, schedule_change_at: str = "cycle_end") -> Dict[str, Any]:
+    """Razorpay's native subscription-plan-change endpoint — swaps the plan
+    on the SAME subscription (no cancel+recreate, no second billing
+    entity). schedule_change_at="cycle_end" (Razorpay's own value) means
+    the currently-authorized cycle keeps running at its original price —
+    nothing is charged or refunded now; the new plan's price only takes
+    effect from the NEXT renewal. See billing_service.change_plan for why
+    this is what a "downgrade" uses: our own DB flips the user's
+    entitlement to the lower plan immediately (a separate, local decision
+    that doesn't touch Razorpay), while this call only ever changes what
+    they'll be billed *going forward* — the two are deliberately
+    independent so "immediate feature downgrade, no refund" doesn't
+    depend on guessing Razorpay's proration math."""
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            response = await client.patch(
+                f"{_API_BASE}/subscriptions/{subscription_id}",
+                auth=_auth(),
+                json={"plan_id": new_plan_id, "schedule_change_at": schedule_change_at},
+            )
+        response.raise_for_status()
+        return response.json()
+    except httpx.HTTPStatusError as exc:
+        raise ExternalProviderError(f"Razorpay rejected the plan change: {exc.response.text}") from exc
+    except httpx.HTTPError as exc:
+        raise ExternalProviderError(f"Razorpay plan-change request failed: {exc}") from exc
+
+
 async def fetch_subscription(subscription_id: str) -> Dict[str, Any]:
     """Used as a fallback when the website wants to confirm status right
     after checkout, before any webhook has necessarily arrived yet."""

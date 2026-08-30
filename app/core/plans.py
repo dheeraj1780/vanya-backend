@@ -183,6 +183,19 @@ RAZORPAY_PLAN_ID_TO_PLAN: Dict[str, str] = {plan.razorpay_plan_id: plan.key for 
 _UPGRADE_PATH = ["guest", "plantie", "green_thumb", "photosynthesis_phd"]
 
 
+def plan_rank(plan_key: str) -> int:
+    """Where a plan sits on _UPGRADE_PATH — higher is better. Used by
+    billing_service.change_plan to confirm a requested plan switch is
+    actually a downgrade (strictly lower rank than the user's current
+    plan) before allowing it to skip the normal paid-checkout flow.
+    Returns -1 for an unrecognized key, which never ranks above anything
+    real."""
+    try:
+        return _UPGRADE_PATH.index(plan_key)
+    except ValueError:
+        return -1
+
+
 def next_tier(plan_key: str) -> Optional[PlanConfig]:
     try:
         idx = _UPGRADE_PATH.index(plan_key)

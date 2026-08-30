@@ -8,8 +8,14 @@ from app.core.exceptions import AppException
 from app.core.response import error_response, success_response, unexpected_error_response
 from app.dependencies import get_current_user, get_request_id
 from app.models.user import User
-from app.schemas.billing import CreateSubscriptionRequest
-from app.services.billing_service import cancel_subscription, create_subscription, get_subscription_status, process_razorpay_webhook
+from app.schemas.billing import ChangePlanRequest, CreateSubscriptionRequest
+from app.services.billing_service import (
+    cancel_subscription,
+    change_plan,
+    create_subscription,
+    get_subscription_status,
+    process_razorpay_webhook,
+)
 
 router = APIRouter(tags=["Billing"])
 
@@ -33,6 +39,25 @@ async def create_subscription_endpoint(
         return error_response(exc.message, exc.error_code, exc.status_code, trace_id)
     except Exception as exc:
         return unexpected_error_response("creating subscription", exc, trace_id)
+
+
+@router.post("/billing/razorpay/change-plan")
+async def change_plan_endpoint(
+    request: ChangePlanRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    trace_id: str = Depends(get_request_id),
+) -> JSONResponse:
+    """Called from the website's plans page — downgrades only (a plan
+    strictly cheaper than the user's current one). See
+    billing_service.change_plan for why upgrades don't use this."""
+    try:
+        data = await change_plan(db, current_user, request.plan)
+        return success_response(data.model_dump(mode="json"), "Plan changed", 200, trace_id)
+    except AppException as exc:
+        return error_response(exc.message, exc.error_code, exc.status_code, trace_id)
+    except Exception as exc:
+        return unexpected_error_response("changing plan", exc, trace_id)
 
 
 @router.post("/billing/razorpay/cancel-subscription")
