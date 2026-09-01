@@ -5,7 +5,7 @@ typed, and wrapped in try/except so a raw DB driver exception never leaks
 past this layer.
 """
 from datetime import datetime
-from typing import Optional
+from typing import List, Optional
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -196,6 +196,27 @@ async def finalize_deletion(db: AsyncSession, user: User) -> None:
     except Exception as exc:
         await db.rollback()
         raise InternalServerError(f"Failed to finalize account deletion: {exc}") from exc
+
+
+async def list_users_pending_finalization(db: AsyncSession, cutoff: datetime) -> List[User]:
+    """Every soft-deleted account whose restore window closed at or before
+    `cutoff` and hasn't been finalized yet — used only by
+    account_service.sweep_expired_deletions. provider_id NOT starting with
+    "deleted:" is how finalize_deletion marks a row as already handled
+    (see its own docstring), so this naturally excludes anything the sweep
+    (or the lazy sign-in-retry trigger) already got to — each row is only
+    ever returned here once, not repeatedly on every sweep tick."""
+    try:
+        result = await db.execute(
+            select(User).where(
+                User.deleted_at.is_not(None),
+                User.deleted_at <= cutoff,
+                ~User.provider_id.like("deleted:%"),
+            )
+        )
+        return list(result.scalars().all())
+    except Exception as exc:
+        raise InternalServerError(f"Failed to list users pending finalization: {exc}") from exc
 
 
 async def get_preference(db: AsyncSession, user_id: str) -> Optional[UserPreference]:

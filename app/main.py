@@ -1,6 +1,7 @@
 """
 App entrypoint. Run with: uvicorn app.main:app --reload
 """
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -9,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app.core.config import get_settings
-from app.core.database import init_db
+from app.core.database import AsyncSessionLocal, init_db
 from app.core.exceptions import AppException
 from app.core.response import error_response
 from app.routers import (
@@ -21,8 +22,39 @@ from app.routers import (
     entitlement_router,
     plants_router,
 )
+from app.services.account_service import sweep_expired_deletions
 
 settings = get_settings()
+logger = logging.getLogger("plant_companion")
+
+# How often the background sweep checks for accounts whose 24h restore
+# window has closed (see account_service.sweep_expired_deletions for why
+# this exists — cancelling a subscription only once deletion is genuinely
+# permanent, never at delete time, so a restore is never at risk of losing
+# it). Deliberately much shorter than the window itself: this only affects
+# how soon a *permanently* abandoned account's billing actually stops, not
+# anything restore-related, so an hour of slack here is fine.
+DELETION_SWEEP_INTERVAL_SECONDS = 60 * 60
+
+
+async def _run_deletion_sweep_loop() -> None:
+    """Runs for the lifetime of the process. A free-tier Render dyno can
+    sleep for hours between requests, silently pausing this loop along
+    with everything else — harmless: sweep_expired_deletions's query has
+    no upper bound on how old a pending account can be, so whatever
+    accumulated while asleep is simply caught on the next tick after
+    waking, not missed."""
+    while True:
+        await asyncio.sleep(DELETION_SWEEP_INTERVAL_SECONDS)
+        try:
+            async with AsyncSessionLocal() as db:
+                count = await sweep_expired_deletions(db)
+                if count:
+                    logger.info(f"Deletion sweep: finalized {count} account(s) past their restore window.")
+        except Exception as exc:
+            # A single bad tick should never kill the loop -- there's
+            # always another one an hour from now.
+            logger.error(f"Deletion sweep tick failed: {exc}")
 
 
 @asynccontextmanager
@@ -30,7 +62,11 @@ async def lifespan(app: FastAPI):
     # Dev-friendly: creates tables if they don't exist. Swap for Alembic
     # migrations before a real production launch — see database.py's note.
     await init_db()
-    yield
+    sweep_task = asyncio.create_task(_run_deletion_sweep_loop())
+    try:
+        yield
+    finally:
+        sweep_task.cancel()
 
 
 app = FastAPI(title="Plant Companion API", version="1.0.0", lifespan=lifespan)
