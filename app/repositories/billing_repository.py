@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Optional
+from typing import List, Optional
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,6 +14,17 @@ async def get_subscription_by_user(db: AsyncSession, user_id: str) -> Optional[S
         return result.scalar_one_or_none()
     except Exception as exc:
         raise InternalServerError(f"Failed to fetch subscription: {exc}") from exc
+
+
+async def list_subscriptions_for_reconciliation(db: AsyncSession) -> List[Subscription]:
+    """Every subscription row currently believed non-expired — used only by
+    billing_service.reconcile_subscriptions, the periodic safety-net re-poll
+    against Razorpay's own API in case a webhook for it was ever missed."""
+    try:
+        result = await db.execute(select(Subscription).where(Subscription.status != "expired"))
+        return list(result.scalars().all())
+    except Exception as exc:
+        raise InternalServerError(f"Failed to list subscriptions for reconciliation: {exc}") from exc
 
 
 async def upsert_subscription(

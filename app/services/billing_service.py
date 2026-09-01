@@ -25,6 +25,7 @@ client" principle the rest of this app already follows.
 """
 import hashlib
 import json
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
@@ -38,6 +39,7 @@ from app.repositories.billing_repository import (
     create_webhook_event,
     get_subscription_by_user,
     get_webhook_event_by_external_id,
+    list_subscriptions_for_reconciliation,
     upsert_subscription,
 )
 from app.repositories.user_repository import get_user_by_id, update_subscription_status
@@ -54,6 +56,7 @@ from app.utils.razorpay_client import (
 )
 
 settings = get_settings()
+logger = logging.getLogger("plant_companion")
 
 # How long a just-started ("created", never-activated) subscription blocks
 # a second create_subscription call for the same user — see that
@@ -344,26 +347,87 @@ async def process_razorpay_webhook(
             await create_webhook_event(db, None, event_type, external_event_id, event)
             return
 
-        razorpay_plan_id = subscription_entity.get("plan_id")
-        razorpay_subscription_id = subscription_entity.get("id")
-        status = status_for(subscription_entity.get("status", ""))
-        current_end = subscription_entity.get("current_end")
-        expires_at = datetime.fromtimestamp(current_end, tz=timezone.utc) if current_end else None
-
-        # razorpay_plan_id must be one we currently recognize (see
-        # plans.py) — otherwise don't touch the user's plan association
-        # (an unrecognized/retired plan_id shouldn't silently downgrade
-        # them), but still record the webhook itself for audit, and still
-        # honor an "expired" status regardless (cancellation always applies).
-        recognized_plan_id = razorpay_plan_id if razorpay_plan_id in RAZORPAY_PLAN_ID_TO_PLAN else None
-
-        sub = await upsert_subscription(
-            db, user.user_id, recognized_plan_id or razorpay_plan_id, status, expires_at, razorpay_subscription_id
-        )
-        if recognized_plan_id is not None or status == "expired":
-            await update_subscription_status(db, user, status, expires_at, recognized_plan_id)
+        sub = await _apply_subscription_state(db, user, subscription_entity)
         await create_webhook_event(db, sub.subscription_id, event_type, external_event_id, event)
     except AppException:
         raise
     except Exception as exc:
         raise InternalServerError(f"Failed to process Razorpay webhook: {exc}") from exc
+
+
+async def _apply_subscription_state(db: AsyncSession, user: User, subscription_entity: Dict[str, Any]):
+    """The one place a raw Razorpay subscription entity turns into our own
+    DB's subscription state — shared by process_razorpay_webhook (the
+    normal, fast path, fed by Razorpay's push) and reconcile_subscriptions
+    (the periodic safety net below, fed by a direct GET instead) so the
+    two can never quietly diverge in how they interpret the same data. A
+    subscription can never end up in a state the webhook itself wouldn't
+    have produced — reconciliation isn't a second, looser trust boundary,
+    it's the identical write path on a different trigger."""
+    razorpay_plan_id = subscription_entity.get("plan_id")
+    razorpay_subscription_id = subscription_entity.get("id")
+    status = status_for(subscription_entity.get("status", ""))
+    current_end = subscription_entity.get("current_end")
+    expires_at = datetime.fromtimestamp(current_end, tz=timezone.utc) if current_end else None
+
+    # razorpay_plan_id must be one we currently recognize (see plans.py) —
+    # otherwise don't touch the user's plan association (an unrecognized/
+    # retired plan_id shouldn't silently downgrade them), but still honor
+    # an "expired" status regardless (cancellation always applies).
+    recognized_plan_id = razorpay_plan_id if razorpay_plan_id in RAZORPAY_PLAN_ID_TO_PLAN else None
+
+    sub = await upsert_subscription(
+        db, user.user_id, recognized_plan_id or razorpay_plan_id, status, expires_at, razorpay_subscription_id
+    )
+    if recognized_plan_id is not None or status == "expired":
+        await update_subscription_status(db, user, status, expires_at, recognized_plan_id)
+    return sub
+
+
+async def reconcile_subscriptions(db: AsyncSession) -> int:
+    """Periodic safety net (see main.py's lifespan) — re-fetches every
+    subscription we currently believe is still current directly from
+    Razorpay and re-applies its real state through _apply_subscription_
+    state, the exact same write path process_razorpay_webhook uses.
+
+    Why this exists: the webhook is the fast, normal path (usually
+    landing within seconds of a real event), but it depends on Razorpay's
+    delivery actually reaching this backend. Razorpay retries a failed
+    delivery, but only for a bounded window — and this backend can be
+    unreachable for stretches of its own (a free-tier Render dyno asleep
+    exactly when a webhook fires, a deploy restart mid-delivery, a
+    transient DB outage). A permanently-lost webhook would otherwise
+    leave a subscription's status stale indefinitely, with nothing ever
+    correcting it — the exact gap flagged as unsolved when this billing
+    system was first mapped out end to end.
+
+    Scoped to non-expired rows only (status != "expired") — reconciling
+    every subscription ever created, forever, would grow the API call
+    volume unboundedly for no real benefit; a subscription already
+    believed over is exceedingly unlikely to have silently come back, and
+    the actual risk this protects against — still-billing-in-reality
+    access we don't know to grant, or the reverse — only lives in rows we
+    currently think are still active or pending.
+
+    A failure on one subscription never aborts the batch — logged,
+    skipped, picked up again on the next tick, same "don't let one bad
+    row take down the whole run" shape as account_service.sweep_expired_
+    deletions. Returns how many rows actually changed state, for the
+    caller to log."""
+    pending = await list_subscriptions_for_reconciliation(db)
+    corrected = 0
+    for sub in pending:
+        if not sub.provider_subscription_id:
+            continue
+        try:
+            user = await get_user_by_id(db, sub.user_id)
+            if user is None:
+                continue
+            entity = await razorpay_fetch_subscription(sub.provider_subscription_id)
+            before = (user.subscription_status, user.subscription_product_id)
+            await _apply_subscription_state(db, user, entity)
+            if (user.subscription_status, user.subscription_product_id) != before:
+                corrected += 1
+        except Exception as exc:
+            logger.error(f"Reconciliation failed for subscription {sub.subscription_id} (user {sub.user_id}): {exc}")
+    return corrected

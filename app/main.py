@@ -23,6 +23,7 @@ from app.routers import (
     plants_router,
 )
 from app.services.account_service import sweep_expired_deletions
+from app.services.billing_service import reconcile_subscriptions
 
 settings = get_settings()
 logger = logging.getLogger("plant_companion")
@@ -35,6 +36,14 @@ logger = logging.getLogger("plant_companion")
 # how soon a *permanently* abandoned account's billing actually stops, not
 # anything restore-related, so an hour of slack here is fine.
 DELETION_SWEEP_INTERVAL_SECONDS = 60 * 60
+
+# How often every non-expired subscription gets re-fetched directly from
+# Razorpay and re-reconciled (see billing_service.reconcile_subscriptions)
+# — this is the safety net for a webhook that never arrived at all, so it
+# runs much tighter than the deletion sweep: billing correctness staying
+# wrong for up to an hour is a real problem in a way an abandoned deletion
+# finalizing an hour late never is.
+SUBSCRIPTION_RECONCILE_INTERVAL_SECONDS = 30 * 60
 
 
 async def _run_deletion_sweep_loop() -> None:
@@ -57,16 +66,40 @@ async def _run_deletion_sweep_loop() -> None:
             logger.error(f"Deletion sweep tick failed: {exc}")
 
 
+async def _run_subscription_reconcile_loop() -> None:
+    """Runs for the lifetime of the process, same "asleep dyno just delays
+    the next tick, never loses work" reasoning as the deletion sweep — see
+    billing_service.reconcile_subscriptions for what each tick actually
+    does and why it exists. Ticks once immediately on startup (unlike the
+    deletion sweep, which only needs hourly resolution and can wait for
+    its first interval) — a deploy restart is itself one of the exact
+    moments a webhook could have been missed, so the first correctness
+    check shouldn't wait 30 more minutes to happen."""
+    while True:
+        try:
+            async with AsyncSessionLocal() as db:
+                count = await reconcile_subscriptions(db)
+                if count:
+                    logger.info(f"Subscription reconciliation: corrected {count} row(s) that had drifted from Razorpay's actual state.")
+        except Exception as exc:
+            logger.error(f"Subscription reconciliation tick failed: {exc}")
+        await asyncio.sleep(SUBSCRIPTION_RECONCILE_INTERVAL_SECONDS)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Dev-friendly: creates tables if they don't exist. Swap for Alembic
     # migrations before a real production launch — see database.py's note.
     await init_db()
-    sweep_task = asyncio.create_task(_run_deletion_sweep_loop())
+    background_tasks = [
+        asyncio.create_task(_run_deletion_sweep_loop()),
+        asyncio.create_task(_run_subscription_reconcile_loop()),
+    ]
     try:
         yield
     finally:
-        sweep_task.cancel()
+        for task in background_tasks:
+            task.cancel()
 
 
 app = FastAPI(title="Plant Companion API", version="1.0.0", lifespan=lifespan)
