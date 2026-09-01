@@ -18,13 +18,14 @@ only Razorpay's own signed webhook (process_razorpay_webhook) is allowed
 to flip subscription_status. create_subscription only ever creates a
 Razorpay subscription in "created" (unpaid) status; get_subscription_status
 is a read-only poll of whatever this backend's own DB currently believes,
-which is only ever written by the webhook. Same "entitlement must be
-verified securely, never trust the client" principle the rest of this
-app already follows.
+which is only ever written by the webhook (create_subscription is the one
+exception, and only ever writes status="created" — see its own docstring
+for why). Same "entitlement must be verified securely, never trust the
+client" principle the rest of this app already follows.
 """
 import hashlib
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -54,14 +55,62 @@ from app.utils.razorpay_client import (
 
 settings = get_settings()
 
+# How long a just-started ("created", never-activated) subscription blocks
+# a second create_subscription call for the same user — see that
+# function's own docstring. Generous enough to comfortably cover a real
+# Checkout session (open the modal, enter UPI/card details, confirm),
+# short enough that someone who genuinely abandoned it isn't locked out of
+# ever subscribing again for long.
+PENDING_SUBSCRIBE_COOLDOWN = timedelta(minutes=20)
+
 
 async def create_subscription(db: AsyncSession, user: User, plan_key: str) -> CreateSubscriptionData:
+    """Guards against exactly the failure mode found live in testing: five
+    simultaneously-"active" Razorpay subscriptions stacked on one account
+    from repeated re-subscribing. Nothing on Razorpay's side prevents a
+    customer from having multiple subscriptions at once — that's by
+    design on their end, since a business might legitimately sell more
+    than one product to the same customer — so enforcing "one plan per
+    VANYA user" is entirely on us, and this used to not do it at all.
+
+    The tricky part isn't blocking a second subscribe once the first is
+    genuinely active (entitlement_service already gates that at the UI/
+    plan-card level) — it's the race in between: Checkout succeeds, but
+    Razorpay's webhook (the only thing that writes status="active") can
+    take a few seconds to arrive. A second click, a second tab, or an
+    impatient retry in that exact window used to see no subscription on
+    file yet and just create another one. Closing that requires recording
+    SOMETHING the instant a subscription is created, not waiting for the
+    webhook — hence the immediate upsert_subscription(status="created")
+    below, the one deliberate exception to this module's "only the
+    webhook writes subscription state" rule (see the module docstring).
+
+    A "created" row blocks a retry only while it's recent
+    (PENDING_SUBSCRIBE_COOLDOWN) — an older one is presumably an abandoned
+    Checkout (see the "modal dismissed" scenario elsewhere in this
+    codebase) and shouldn't permanently lock someone out of ever
+    subscribing. An "active" row always blocks, full stop — that's a real
+    subscription, not something a retry should ever duplicate.
+
+    Known residual gap: if razorpay_create_subscription succeeds but the
+    upsert_subscription commit right after it fails (a genuine DB outage
+    at that exact moment), this guard has nothing to catch on the next
+    attempt. Accepted as a rare partial-failure window, not solved here —
+    would need a full outbox/saga pattern to close completely."""
     try:
         plan = PLANS.get(plan_key)
         if plan is None or plan.razorpay_plan_id is None:
             raise BadRequestError(f"'{plan_key}' is not a purchasable plan")
 
+        existing = await get_subscription_by_user(db, user.user_id)
+        if existing is not None:
+            if existing.status == "active":
+                raise BadRequestError("You already have an active subscription — manage it from the Account page.")
+            if existing.status == "created" and existing.updated_at > datetime.utcnow() - PENDING_SUBSCRIBE_COOLDOWN:
+                raise BadRequestError("A subscription attempt is already in progress — finish that checkout, or wait a few minutes and try again.")
+
         result = await razorpay_create_subscription(plan.razorpay_plan_id, user.user_id)
+        await upsert_subscription(db, user.user_id, None, "created", None, result["id"])
         return CreateSubscriptionData(subscription_id=result["id"], razorpay_key_id=settings.razorpay_key_id)
     except AppException:
         raise
