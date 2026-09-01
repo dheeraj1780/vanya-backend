@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.exceptions import AppException, GuestSignInRequiredError, InternalServerError, PlanLimitExceededError
 from app.core.plans import FeatureAllowance, PlanConfig, next_tier, plan_for
 from app.models.user import User
+from app.repositories.billing_repository import get_subscription_by_user
 from app.repositories.plant_repository import count_growth_memories_by_user, count_plants_by_user
 from app.repositories.usage_repository import count_calls_since, oldest_call_since, utcnow
 from app.schemas.entitlement import EntitlementData, FeatureUsage, GardenSetupData, GrowthMemoryData, WishlistData
@@ -98,6 +99,8 @@ async def get_entitlement(db: AsyncSession, user: User) -> EntitlementData:
         garden_setup = await _garden_setup_status(db, user, plan)
         growth_memory_count = await count_growth_memories_by_user(db, user.user_id)
         nxt = next_tier(plan.key)
+        sub = await get_subscription_by_user(db, user.user_id)
+        cancel_scheduled = bool(sub and sub.cancel_scheduled and user.subscription_status == "active")
 
         return EntitlementData(
             plan=plan.key,
@@ -115,6 +118,7 @@ async def get_entitlement(db: AsyncSession, user: User) -> EntitlementData:
             growth_memories=GrowthMemoryData(count=growth_memory_count, limit=plan.growth_memory_limit),
             next_plan=nxt.key if nxt else None,
             next_plan_display_name=nxt.display_name if nxt else None,
+            cancel_scheduled=cancel_scheduled,
         )
     except AppException:
         raise

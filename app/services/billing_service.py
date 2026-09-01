@@ -99,7 +99,14 @@ async def create_subscription(db: AsyncSession, user: User, plan_key: str) -> Cr
     upsert_subscription commit right after it fails (a genuine DB outage
     at that exact moment), this guard has nothing to catch on the next
     attempt. Accepted as a rare partial-failure window, not solved here —
-    would need a full outbox/saga pattern to close completely."""
+    would need a full outbox/saga pattern to close completely.
+
+    One deliberate exception to the "active always blocks" rule: a user
+    who cancelled and changed their mind before the cycle actually ended
+    (existing.cancel_scheduled) is subscribing to the SAME plan they
+    already have, not creating a genuine duplicate — see
+    _resume_subscription for why that needs its own path rather than
+    just letting this fall through to a normal create."""
     try:
         plan = PLANS.get(plan_key)
         if plan is None or plan.razorpay_plan_id is None:
@@ -108,17 +115,60 @@ async def create_subscription(db: AsyncSession, user: User, plan_key: str) -> Cr
         existing = await get_subscription_by_user(db, user.user_id)
         if existing is not None:
             if existing.status == "active":
+                if existing.cancel_scheduled and existing.product_id == plan.razorpay_plan_id:
+                    return await _resume_subscription(db, user, existing)
                 raise BadRequestError("You already have an active subscription — manage it from the Account page.")
             if existing.status == "created" and existing.updated_at > datetime.utcnow() - PENDING_SUBSCRIBE_COOLDOWN:
                 raise BadRequestError("A subscription attempt is already in progress — finish that checkout, or wait a few minutes and try again.")
 
         result = await razorpay_create_subscription(plan.razorpay_plan_id, user.user_id)
-        await upsert_subscription(db, user.user_id, None, "created", None, result["id"])
+        await upsert_subscription(db, user.user_id, None, "created", None, result["id"], cancel_scheduled=False)
         return CreateSubscriptionData(subscription_id=result["id"], razorpay_key_id=settings.razorpay_key_id)
     except AppException:
         raise
     except Exception as exc:
         raise InternalServerError(f"Failed to create Razorpay subscription: {exc}") from exc
+
+
+async def _resume_subscription(db: AsyncSession, user: User, existing) -> CreateSubscriptionData:
+    """Undoes a cancellation before the cycle actually ends — the one
+    thing Razorpay itself has no API for (confirmed directly against
+    their docs: the only "undo" endpoint reverses a scheduled *plan
+    change*, not a cancellation — see billing_service's earlier
+    reconciliation-job work for that same finding). The only way to
+    genuinely keep billing going is a fresh subscription; the trick is
+    doing it without a gap or a double charge.
+
+    Fetches the still-active old subscription's current_end and creates a
+    new one for the SAME plan with start_at set to that same date — so
+    the new mandate picks up exactly where the old one would have
+    stopped. The old one is left alone (already scheduled to cancel on
+    its own; no need to touch it again) rather than force-cancelled now,
+    since it's still correctly covering access in the meantime.
+
+    Needs the customer's explicit authorization like any new mandate
+    (returns requires_checkout via CreateSubscriptionData's normal
+    shape — this reuses the exact same Checkout flow as a first-time
+    subscribe on the website, no new UI concept for the client).
+
+    Deliberately does NOT write anything to our own DB here (unlike
+    create_subscription's own immediate "created" placeholder) — writing
+    cancel_scheduled=False now, before the new mandate is actually
+    confirmed, would hide "Resume subscription" the moment this call
+    returns even if the customer then abandons Checkout, while the real
+    (untouched) old subscription keeps heading for cancellation regardless.
+    Leaving this row alone means cancel_scheduled only ever flips to False
+    once _apply_subscription_state sees the NEW subscription id for real
+    (a genuine webhook/reconciliation confirmation) — abandon the
+    Checkout, and the next visit still correctly offers to resume, because
+    nothing here claimed it was already done. The accepted trade-off is
+    the same class of residual double-click race create_subscription's
+    own docstring already accepts (two tabs, not two clicks in one —
+    the frontend's busy-button state already covers the common case)."""
+    current = await razorpay_fetch_subscription(existing.provider_subscription_id)
+    current_end = current.get("current_end")
+    new_sub = await razorpay_create_subscription(existing.product_id, user.user_id, start_at=current_end)
+    return CreateSubscriptionData(subscription_id=new_sub["id"], razorpay_key_id=settings.razorpay_key_id)
 
 
 async def change_plan(db: AsyncSession, user: User, new_plan_key: str) -> ChangePlanData:
@@ -262,7 +312,7 @@ async def _change_plan_upi_fallback(db: AsyncSession, user: User, old_subscripti
     await razorpay_cancel_subscription(old_subscription_id, cancel_at_cycle_end=True)
     new_sub = await razorpay_create_subscription(new_plan.razorpay_plan_id, user.user_id, start_at=current_end)
 
-    await upsert_subscription(db, user.user_id, new_plan.razorpay_plan_id, "active", user.subscription_expires_at, new_sub["id"])
+    await upsert_subscription(db, user.user_id, new_plan.razorpay_plan_id, "active", user.subscription_expires_at, new_sub["id"], cancel_scheduled=False)
     await update_subscription_status(db, user, user.subscription_status, user.subscription_expires_at, new_plan.razorpay_plan_id)
 
     return ChangePlanData(
@@ -282,12 +332,18 @@ async def cancel_subscription(db: AsyncSession, user: User) -> None:
     what they already paid for. Doesn't write subscription_status itself;
     that only ever happens via the webhook once Razorpay actually fires
     subscription.cancelled at cycle end (same trust boundary as everywhere
-    else in this module)."""
+    else in this module) — cancel_scheduled is the one deliberate
+    exception, same spirit as create_subscription's immediate "created"
+    write: purely informational (lets the website show "Resume
+    subscription" — see _resume_subscription), never itself read by the
+    entitlement engine, so writing it directly here doesn't touch the
+    trust boundary that actually governs access."""
     try:
         sub = await get_subscription_by_user(db, user.user_id)
         if sub is None or not sub.provider_subscription_id:
             raise NotFoundError("No subscription found for this account")
         await razorpay_cancel_subscription(sub.provider_subscription_id, cancel_at_cycle_end=True)
+        await upsert_subscription(db, user.user_id, sub.product_id, sub.status, sub.expires_at, cancel_scheduled=True)
     except AppException:
         raise
     except Exception as exc:
@@ -363,7 +419,19 @@ async def _apply_subscription_state(db: AsyncSession, user: User, subscription_e
     two can never quietly diverge in how they interpret the same data. A
     subscription can never end up in a state the webhook itself wouldn't
     have produced — reconciliation isn't a second, looser trust boundary,
-    it's the identical write path on a different trigger."""
+    it's the identical write path on a different trigger.
+
+    Also the one place cancel_scheduled gets reset back to False on a
+    normal (non-cancel_subscription-initiated) write: whenever the
+    incoming event is for a DIFFERENT provider_subscription_id than what
+    was previously stored, some fresh subscription (a resume, an upgrade,
+    a downgrade's UPI fallback) has taken over — whatever cancellation
+    applied to the PREVIOUS subscription is no longer relevant to this
+    new one. The same subscription id recurring (a routine renewal/status
+    event) leaves cancel_scheduled exactly as cancel_subscription last
+    set it — this function has no way to know a scheduled cancellation
+    still stands or not from the entity alone, so it simply never touches
+    a flag it didn't just make stale."""
     razorpay_plan_id = subscription_entity.get("plan_id")
     razorpay_subscription_id = subscription_entity.get("id")
     status = status_for(subscription_entity.get("status", ""))
@@ -376,8 +444,12 @@ async def _apply_subscription_state(db: AsyncSession, user: User, subscription_e
     # an "expired" status regardless (cancellation always applies).
     recognized_plan_id = razorpay_plan_id if razorpay_plan_id in RAZORPAY_PLAN_ID_TO_PLAN else None
 
+    existing = await get_subscription_by_user(db, user.user_id)
+    cancel_scheduled = False if (existing is None or existing.provider_subscription_id != razorpay_subscription_id) else None
+
     sub = await upsert_subscription(
-        db, user.user_id, recognized_plan_id or razorpay_plan_id, status, expires_at, razorpay_subscription_id
+        db, user.user_id, recognized_plan_id or razorpay_plan_id, status, expires_at, razorpay_subscription_id,
+        cancel_scheduled=cancel_scheduled,
     )
     if recognized_plan_id is not None or status == "expired":
         await update_subscription_status(db, user, status, expires_at, recognized_plan_id)

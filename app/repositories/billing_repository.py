@@ -34,7 +34,15 @@ async def upsert_subscription(
     status: str,
     expires_at: Optional[datetime],
     provider_subscription_id: Optional[str] = None,
+    cancel_scheduled: Optional[bool] = None,
 ) -> Subscription:
+    """cancel_scheduled follows the same "None = leave untouched" pattern
+    as provider_subscription_id's falsy-skip above, just spelled out with
+    an explicit sentinel since False is itself a meaningful value here
+    (unlike provider_subscription_id, where empty/falsy never is). See
+    billing_service.cancel_subscription (sets True) and
+    _apply_subscription_state (resets to False when a different
+    subscription id takes over) for the two ends of its lifecycle."""
     try:
         existing = await get_subscription_by_user(db, user_id)
         if existing:
@@ -43,6 +51,8 @@ async def upsert_subscription(
             existing.expires_at = expires_at
             if provider_subscription_id:
                 existing.provider_subscription_id = provider_subscription_id
+            if cancel_scheduled is not None:
+                existing.cancel_scheduled = cancel_scheduled
             await db.commit()
             await db.refresh(existing)
             return existing
@@ -53,6 +63,7 @@ async def upsert_subscription(
             status=status,
             expires_at=expires_at,
             provider_subscription_id=provider_subscription_id,
+            cancel_scheduled=cancel_scheduled if cancel_scheduled is not None else False,
         )
         db.add(sub)
         await db.commit()

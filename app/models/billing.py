@@ -9,7 +9,7 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import JSON, DateTime, ForeignKey, String, Text
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -31,6 +31,16 @@ class Subscription(Base):
     provider_subscription_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     product_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     status: Mapped[str] = mapped_column(String(20), nullable=False)  # free | active | expired
+    # True from the moment cancel_subscription schedules a cancel_at_
+    # cycle_end on this row's provider_subscription_id, until either it
+    # actually expires or a fresh subscription (a resume, upgrade, or
+    # downgrade fallback) takes its place — see billing_service.
+    # cancel_subscription and _apply_subscription_state for the two ends
+    # of that lifecycle. Purely informational (surfaced to the website so
+    # "Resume subscription" can show up), never itself read by the
+    # entitlement engine — access is still governed entirely by status/
+    # expires_at/product_id exactly as before.
+    cancel_scheduled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(

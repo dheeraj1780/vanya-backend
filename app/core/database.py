@@ -87,6 +87,11 @@ def _add_missing_columns(sync_conn) -> None:
         existing = {col["name"] for col in inspector.get_columns("subscriptions")}
         if "provider_subscription_id" not in existing:
             sync_conn.execute(text("ALTER TABLE subscriptions ADD COLUMN provider_subscription_id VARCHAR(255)"))
+        if "cancel_scheduled" not in existing:
+            # server_default so every pre-existing row backfills to false —
+            # a row from before this column existed was never mid-resume,
+            # so "not scheduled to cancel" is the correct default either way.
+            sync_conn.execute(text("ALTER TABLE subscriptions ADD COLUMN cancel_scheduled BOOLEAN NOT NULL DEFAULT FALSE"))
 
 
 async def init_db() -> None:

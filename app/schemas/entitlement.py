@@ -61,6 +61,12 @@ class EntitlementData(BaseModel):
     # tier (Photosynthesis PhD has nowhere further to go at launch).
     next_plan: Optional[str] = None
     next_plan_display_name: Optional[str] = None
+    # True while a paid subscription is active but scheduled to end at
+    # cycle close (see billing_service.cancel_subscription) — the website
+    # shows "Resume subscription" whenever this is true, since Razorpay
+    # itself has no way to reverse the cancellation directly (see
+    # billing_service._resume_subscription's docstring).
+    cancel_scheduled: bool = False
 
 
 class PreferencesData(BaseModel):
