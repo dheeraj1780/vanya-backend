@@ -431,7 +431,20 @@ async def _apply_subscription_state(db: AsyncSession, user: User, subscription_e
     event) leaves cancel_scheduled exactly as cancel_subscription last
     set it — this function has no way to know a scheduled cancellation
     still stands or not from the entity alone, so it simply never touches
-    a flag it didn't just make stale."""
+    a flag it didn't just make stale.
+
+    And the one guard against a real race the resume/upgrade/downgrade-
+    UPI-fallback flows all introduced: each of those cancels an OLD
+    subscription and creates a NEW one, switching this row to the new id
+    right away — but the OLD subscription's own final "cancelled" webhook
+    doesn't fire until ITS cancellation actually takes effect, which for
+    a cycle-end cancel (the downgrade fallback, an ordinary resume) can be
+    WEEKS after the switch already happened. If that stale event lands
+    after a newer subscription has taken over, blindly applying it would
+    stomp a correctly-active user back to "expired". A terminal event for
+    an id that no longer matches what's on file is exactly that — a
+    superseded subscription's late echo, not real news — so it's recorded
+    (the caller's create_webhook_event still runs) but never applied."""
     razorpay_plan_id = subscription_entity.get("plan_id")
     razorpay_subscription_id = subscription_entity.get("id")
     status = status_for(subscription_entity.get("status", ""))
@@ -445,7 +458,15 @@ async def _apply_subscription_state(db: AsyncSession, user: User, subscription_e
     recognized_plan_id = razorpay_plan_id if razorpay_plan_id in RAZORPAY_PLAN_ID_TO_PLAN else None
 
     existing = await get_subscription_by_user(db, user.user_id)
-    cancel_scheduled = False if (existing is None or existing.provider_subscription_id != razorpay_subscription_id) else None
+    superseded = (
+        existing is not None
+        and existing.provider_subscription_id
+        and existing.provider_subscription_id != razorpay_subscription_id
+    )
+    if status == "expired" and superseded:
+        return existing
+
+    cancel_scheduled = False if (existing is None or superseded) else None
 
     sub = await upsert_subscription(
         db, user.user_id, recognized_plan_id or razorpay_plan_id, status, expires_at, razorpay_subscription_id,
