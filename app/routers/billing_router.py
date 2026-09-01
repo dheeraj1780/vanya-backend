@@ -48,9 +48,11 @@ async def change_plan_endpoint(
     db: AsyncSession = Depends(get_db),
     trace_id: str = Depends(get_request_id),
 ) -> JSONResponse:
-    """Called from the website's plans page — downgrades only (a plan
-    strictly cheaper than the user's current one). See
-    billing_service.change_plan for why upgrades don't use this."""
+    """Called from the website's plans page for either direction — a
+    downgrade to a cheaper active plan or an in-place upgrade to a pricier
+    one. See billing_service.change_plan for how the two genuinely differ
+    under the hood (downgrade: instant, no Checkout. upgrade: charges
+    immediately, needs one more Checkout confirmation)."""
     try:
         data = await change_plan(db, current_user, request.plan)
         return success_response(data.model_dump(mode="json"), "Plan changed", 200, trace_id)

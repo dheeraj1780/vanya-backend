@@ -22,10 +22,10 @@ class CreateSubscriptionData(BaseModel):
 
 
 class ChangePlanRequest(BaseModel):
-    """Downgrade only — from one active paid tier to a cheaper one, e.g.
-    Photosynthesis PhD -> Green Thumb. See billing_service.change_plan for
-    why upgrades don't use this (they need to actually collect more money,
-    so they go through the normal create-subscription + Checkout flow)."""
+    """Moves an already-subscribed user directly to a different paid tier,
+    either direction — see billing_service.change_plan for how a downgrade
+    (instant, no Checkout) and an upgrade (charges immediately, needs one
+    more Checkout confirmation) genuinely differ under the hood."""
     plan: Literal["green_thumb", "photosynthesis_phd"]
 
 

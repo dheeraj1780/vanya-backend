@@ -70,14 +70,13 @@ async def create_subscription(db: AsyncSession, user: User, plan_key: str) -> Cr
 
 
 async def change_plan(db: AsyncSession, user: User, new_plan_key: str) -> ChangePlanData:
-    """Downgrade from one active paid tier to a cheaper one (e.g.
-    Photosynthesis PhD -> Green Thumb) — immediate feature change, no
-    refund, existing data untouched. Deliberately NOT a general
-    "change plan" (upgrades still go through create_subscription's normal
-    Checkout flow, since collecting more money needs a real payment step;
-    this only ever moves a user to something cheaper).
+    """Moves an already-subscribed user directly to a different paid tier —
+    branches into two genuinely different flows depending on direction,
+    since only one of them can be done without collecting new money:
 
-    Two independent things happen, on purpose:
+    DOWNGRADE (e.g. Photosynthesis PhD -> Green Thumb): immediate feature
+    change, no refund, existing data untouched. Two independent things
+    happen, on purpose:
     1. Razorpay's own subscription is told to change plan at the END of
        the current cycle (razorpay_update_subscription_plan, schedule_
        change_at="cycle_end") — the cycle already paid for at the higher
@@ -98,6 +97,14 @@ async def change_plan(db: AsyncSession, user: User, new_plan_key: str) -> Change
     touched — same PLANT COLLECTION RULES principle as everywhere else
     (see plans.py): limits only ever block *creating new* things past the
     cap, never delete/hide what's already there.
+
+    UPGRADE (e.g. Green Thumb -> Photosynthesis PhD): the opposite
+    trade-off, by explicit product decision — charges the new plan's full
+    price immediately (no proration for the old plan's unused days, same
+    "no refund either direction" spirit as the downgrade path) and needs
+    one more Checkout confirmation to actually collect it, so this returns
+    requires_checkout=True instead of a done deal. See
+    _upgrade_plan's own docstring for the mechanics.
     """
     try:
         new_plan = PLANS.get(new_plan_key)
@@ -105,15 +112,15 @@ async def change_plan(db: AsyncSession, user: User, new_plan_key: str) -> Change
             raise BadRequestError(f"'{new_plan_key}' is not a purchasable plan")
 
         current_plan = plan_for_user(user)
-        if plan_rank(new_plan_key) >= plan_rank(current_plan.key):
-            raise BadRequestError(
-                f"{new_plan.display_name} isn't a downgrade from {current_plan.display_name} — "
-                "to upgrade, subscribe to it from the plans page instead."
-            )
+        if plan_rank(new_plan_key) == plan_rank(current_plan.key):
+            raise BadRequestError(f"You're already on {new_plan.display_name}.")
 
         sub = await get_subscription_by_user(db, user.user_id)
         if sub is None or not sub.provider_subscription_id:
             raise NotFoundError("No active subscription found for this account")
+
+        if plan_rank(new_plan_key) > plan_rank(current_plan.key):
+            return await _upgrade_plan(user, sub.provider_subscription_id, new_plan)
 
         try:
             await razorpay_update_subscription_plan(sub.provider_subscription_id, new_plan.razorpay_plan_id, schedule_change_at="cycle_end")
@@ -138,6 +145,41 @@ async def change_plan(db: AsyncSession, user: User, new_plan_key: str) -> Change
         raise
     except Exception as exc:
         raise InternalServerError(f"Failed to change plan: {exc}") from exc
+
+
+async def _upgrade_plan(user: User, old_subscription_id: str, new_plan: PlanConfig) -> ChangePlanData:
+    """Explicit product decision: an upgrade charges the new plan's full
+    price right away rather than prorating the old plan's unused days —
+    the mirror image of the downgrade path's own no-refund policy, just in
+    the other direction. Cancels the OLD subscription immediately (not at
+    cycle end — it's being replaced right now, not merely scheduled to
+    lapse later) before creating the new one, same cancel-then-create
+    order _change_plan_upi_fallback already uses for its structurally
+    identical "needs a fresh mandate" flow — just with cancel_at_cycle_end
+    =False and no deferred start_at, since this starts billing today.
+
+    Unlike a downgrade, feature access does NOT flip until the new
+    subscription's payment actually confirms via the webhook — granting a
+    HIGHER tier before payment is verified would violate the "never trust
+    the client, only the signed webhook" trust boundary this module holds
+    everywhere else (see its own module docstring). The website polls for
+    that the same way it already does for a first-time subscribe.
+
+    If the customer abandons the new Checkout, they're simply left with no
+    active paid subscription (the old one is already gone) — recoverable
+    by subscribing again normally, not a money-loss risk either way; the
+    same "fails open, never grants anything unpaid" shape as the downgrade
+    UPI fallback above."""
+    await razorpay_cancel_subscription(old_subscription_id, cancel_at_cycle_end=False)
+    new_sub = await razorpay_create_subscription(new_plan.razorpay_plan_id, user.user_id)
+
+    return ChangePlanData(
+        plan=new_plan.key,
+        message=f"Complete checkout to switch to {new_plan.display_name} for ₹{new_plan.price_inr}/month, starting today.",
+        requires_checkout=True,
+        subscription_id=new_sub["id"],
+        razorpay_key_id=settings.razorpay_key_id,
+    )
 
 
 async def _change_plan_upi_fallback(db: AsyncSession, user: User, old_subscription_id: str, new_plan: PlanConfig) -> ChangePlanData:
