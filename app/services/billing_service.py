@@ -31,7 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.core.exceptions import AppException, BadRequestError, InternalServerError, InvalidSignatureError, NotFoundError
-from app.core.plans import PLANS, RAZORPAY_PLAN_ID_TO_PLAN, plan_rank
+from app.core.plans import PLANS, RAZORPAY_PLAN_ID_TO_PLAN, PlanConfig, plan_rank
 from app.models.user import User
 from app.repositories.billing_repository import (
     create_webhook_event,
@@ -44,7 +44,13 @@ from app.schemas.billing import ChangePlanData, CreateSubscriptionData, Subscrip
 from app.services.entitlement_service import plan_for_user
 from app.utils.razorpay_client import cancel_subscription as razorpay_cancel_subscription
 from app.utils.razorpay_client import create_subscription as razorpay_create_subscription
-from app.utils.razorpay_client import status_for, update_subscription_plan as razorpay_update_subscription_plan, verify_webhook_signature
+from app.utils.razorpay_client import fetch_subscription as razorpay_fetch_subscription
+from app.utils.razorpay_client import (
+    UpiPlanChangeUnsupportedError,
+    status_for,
+    update_subscription_plan as razorpay_update_subscription_plan,
+    verify_webhook_signature,
+)
 
 settings = get_settings()
 
@@ -109,7 +115,10 @@ async def change_plan(db: AsyncSession, user: User, new_plan_key: str) -> Change
         if sub is None or not sub.provider_subscription_id:
             raise NotFoundError("No active subscription found for this account")
 
-        await razorpay_update_subscription_plan(sub.provider_subscription_id, new_plan.razorpay_plan_id, schedule_change_at="cycle_end")
+        try:
+            await razorpay_update_subscription_plan(sub.provider_subscription_id, new_plan.razorpay_plan_id, schedule_change_at="cycle_end")
+        except UpiPlanChangeUnsupportedError:
+            return await _change_plan_upi_fallback(db, user, sub.provider_subscription_id, new_plan)
 
         # Mirrors the webhook's own write pattern (status/expires_at stay
         # exactly as they were — this isn't a status change) but flips the
@@ -126,6 +135,49 @@ async def change_plan(db: AsyncSession, user: User, new_plan_key: str) -> Change
         raise
     except Exception as exc:
         raise InternalServerError(f"Failed to change plan: {exc}") from exc
+
+
+async def _change_plan_upi_fallback(db: AsyncSession, user: User, old_subscription_id: str, new_plan: PlanConfig) -> ChangePlanData:
+    """Razorpay's in-place plan-change endpoint only works for card-based
+    subscriptions — UPI Autopay mandates (the overwhelming majority of
+    VANYA's India subscribers) can't be updated in place at all (see
+    UpiPlanChangeUnsupportedError). The only Razorpay-supported way to move
+    a UPI subscriber to a cheaper plan is: cancel the current mandate at
+    cycle end (so the cycle already paid for keeps running unchanged, same
+    "no refund" policy as the direct path), and create a brand new
+    subscription for the lower plan with its first charge deferred to that
+    same cycle-end date — so nothing bills twice and nothing bills early.
+
+    Unlike the direct path, a NEW mandate needs the customer's explicit
+    authorization (Razorpay requires this for any new UPI Autopay setup,
+    same as subscribing the first time), so this can't be fully silent —
+    the website opens Checkout for the new subscription_id this returns.
+    Feature access still flips immediately regardless of whether/when that
+    Checkout step completes, per the same "downgrade never waits on
+    payment machinery" decision the direct path already makes; if the
+    customer never completes it, the old mandate simply runs out at cycle
+    end with nothing behind it — never grants anything unpaid, only fails
+    open into "no active subscription", same as an ordinary cancellation.
+    """
+    current = await razorpay_fetch_subscription(old_subscription_id)
+    current_end = current.get("current_end")
+
+    await razorpay_cancel_subscription(old_subscription_id, cancel_at_cycle_end=True)
+    new_sub = await razorpay_create_subscription(new_plan.razorpay_plan_id, user.user_id, start_at=current_end)
+
+    await upsert_subscription(db, user.user_id, new_plan.razorpay_plan_id, "active", user.subscription_expires_at, new_sub["id"])
+    await update_subscription_status(db, user, user.subscription_status, user.subscription_expires_at, new_plan.razorpay_plan_id)
+
+    return ChangePlanData(
+        plan=new_plan.key,
+        message=(
+            f"You're on {new_plan.display_name} now. Since your current plan is billed via UPI, Razorpay needs a "
+            "quick one-time confirmation for the new plan to keep billing continuing after your current cycle ends."
+        ),
+        requires_checkout=True,
+        subscription_id=new_sub["id"],
+        razorpay_key_id=settings.razorpay_key_id,
+    )
 
 
 async def cancel_subscription(db: AsyncSession, user: User) -> None:

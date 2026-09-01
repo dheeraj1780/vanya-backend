@@ -32,6 +32,19 @@ class ChangePlanRequest(BaseModel):
 class ChangePlanData(BaseModel):
     plan: str
     message: str
+    # Razorpay's in-place plan-change endpoint (the instant, no-Checkout
+    # path) only works for card-based subscriptions — it hard-rejects UPI
+    # Autopay mandates ("subscriptions cannot be updated when payment mode
+    # is upi"), which is most of VANYA's India-first subscriber base. When
+    # that happens, change_plan falls back to cancel-at-cycle-end + a new
+    # subscription for the lower plan (deferred to start when the old one
+    # ends) — but a NEW UPI mandate needs the customer's explicit
+    # authorization, same as subscribing the first time. requires_checkout
+    # tells the website to open Razorpay Checkout for subscription_id
+    # instead of treating the downgrade as already fully done.
+    requires_checkout: bool = False
+    subscription_id: Optional[str] = None
+    razorpay_key_id: Optional[str] = None
 
 
 class SubscriptionStatusData(BaseModel):

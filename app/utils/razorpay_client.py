@@ -41,28 +41,35 @@ def _auth() -> tuple:
     return (settings.razorpay_key_id, settings.razorpay_key_secret)
 
 
-async def create_subscription(plan_id: str, vanya_user_id: str, total_count: int = 120) -> Dict[str, Any]:
+async def create_subscription(
+    plan_id: str, vanya_user_id: str, total_count: int = 120, start_at: Optional[int] = None
+) -> Dict[str, Any]:
     """Creates a Razorpay subscription in "created" status — the website
     then opens Razorpay Checkout with the returned id, and the user
     completes payment/e-mandate registration there. total_count=120
     (10 years of monthly cycles) is Razorpay's convention for an
     "until cancelled" subscription; it auto-renews each cycle regardless.
 
+    start_at (unix timestamp, optional) defers the first charge — used by
+    billing_service.change_plan's UPI downgrade fallback so the new,
+    cheaper mandate doesn't start billing until the old subscription's
+    current cycle actually ends. The customer still authorizes the mandate
+    now (Checkout still opens); only the first debit is deferred.
+
     notes.vanya_user_id is what let the webhook (see billing_service.py)
     resolve which of our users this subscription belongs to — Razorpay
     echoes `notes` back on every webhook payload unchanged."""
     try:
+        payload: Dict[str, Any] = {
+            "plan_id": plan_id,
+            "total_count": total_count,
+            "customer_notify": 1,
+            "notes": {"vanya_user_id": vanya_user_id},
+        }
+        if start_at is not None:
+            payload["start_at"] = start_at
         async with httpx.AsyncClient(timeout=15.0) as client:
-            response = await client.post(
-                f"{_API_BASE}/subscriptions",
-                auth=_auth(),
-                json={
-                    "plan_id": plan_id,
-                    "total_count": total_count,
-                    "customer_notify": 1,
-                    "notes": {"vanya_user_id": vanya_user_id},
-                },
-            )
+            response = await client.post(f"{_API_BASE}/subscriptions", auth=_auth(), json=payload)
         response.raise_for_status()
         return response.json()
     except httpx.HTTPStatusError as exc:
@@ -92,6 +99,17 @@ async def cancel_subscription(subscription_id: str, cancel_at_cycle_end: bool = 
         raise ExternalProviderError(f"Razorpay subscription cancellation request failed: {exc}") from exc
 
 
+class UpiPlanChangeUnsupportedError(Exception):
+    """Not an AppException on purpose — this never reaches a client as an
+    error response. It's an internal signal for billing_service.change_plan
+    to catch and fall back to the cancel + new-deferred-subscription flow
+    (see its own docstring): Razorpay's in-place plan-change endpoint
+    hard-rejects any subscription paid via UPI Autopay with a 400 ("subscriptions
+    cannot be updated when payment mode is upi") — a real, permanent
+    Razorpay platform restriction (only card-based mandates support
+    in-place updates), not a transient failure worth surfacing as one."""
+
+
 async def update_subscription_plan(subscription_id: str, new_plan_id: str, schedule_change_at: str = "cycle_end") -> Dict[str, Any]:
     """Razorpay's native subscription-plan-change endpoint — swaps the plan
     on the SAME subscription (no cancel+recreate, no second billing
@@ -115,6 +133,12 @@ async def update_subscription_plan(subscription_id: str, new_plan_id: str, sched
         response.raise_for_status()
         return response.json()
     except httpx.HTTPStatusError as exc:
+        try:
+            description = exc.response.json().get("error", {}).get("description", "")
+        except Exception:
+            description = ""
+        if "payment mode is upi" in description.lower():
+            raise UpiPlanChangeUnsupportedError(description) from exc
         raise ExternalProviderError(f"Razorpay rejected the plan change: {exc.response.text}") from exc
     except httpx.HTTPError as exc:
         raise ExternalProviderError(f"Razorpay plan-change request failed: {exc}") from exc
@@ -122,7 +146,9 @@ async def update_subscription_plan(subscription_id: str, new_plan_id: str, sched
 
 async def fetch_subscription(subscription_id: str) -> Dict[str, Any]:
     """Used as a fallback when the website wants to confirm status right
-    after checkout, before any webhook has necessarily arrived yet."""
+    after checkout, before any webhook has necessarily arrived yet — also
+    used by billing_service.change_plan's UPI fallback to read the current
+    subscription's current_end before scheduling a replacement."""
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
             response = await client.get(f"{_API_BASE}/subscriptions/{subscription_id}", auth=_auth())
