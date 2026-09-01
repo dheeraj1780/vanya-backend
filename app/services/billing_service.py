@@ -129,7 +129,10 @@ async def change_plan(db: AsyncSession, user: User, new_plan_key: str) -> Change
 
         return ChangePlanData(
             plan=new_plan.key,
-            message=f"You're on {new_plan.display_name} now. Your next bill will reflect the new price.",
+            message=(
+                f"You're on {new_plan.display_name} now, limits and all. You already paid for this cycle at the "
+                f"old price, so nothing changes there — your next bill is what reflects the new ₹{new_plan.price_inr}/month."
+            ),
         )
     except AppException:
         raise
@@ -171,8 +174,8 @@ async def _change_plan_upi_fallback(db: AsyncSession, user: User, old_subscripti
     return ChangePlanData(
         plan=new_plan.key,
         message=(
-            f"You're on {new_plan.display_name} now. Since your current plan is billed via UPI, Razorpay needs a "
-            "quick one-time confirmation for the new plan to keep billing continuing after your current cycle ends."
+            f"You're on {new_plan.display_name} now, limits and all. Since your current plan is billed via UPI, "
+            "Razorpay needs one quick confirmation for the new plan so it keeps billing after your current cycle ends."
         ),
         requires_checkout=True,
         subscription_id=new_sub["id"],
