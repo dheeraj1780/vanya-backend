@@ -23,7 +23,15 @@ settings = get_settings()
 # separate from (and tighter than) the general daily AI-cost safety net
 # below, so a handful of honest mis-scans never penalizes anyone, but
 # repeatedly feeding it junk for the rest of the day does.
-_MAX_NON_PLANT_ATTEMPTS_PER_DAY = 3
+#
+# Was 3 — too low in practice: this is checked BEFORE the new photo is even
+# looked at, so once tripped, every subsequent attempt gets the "take a
+# break" message regardless of whether that next photo is a real plant, for
+# a full rolling 24h. 3 honest mis-scans (bad lighting, a cropped shot, a
+# decorative fake plant, testing) shouldn't lock someone out of the app's
+# core feature for a day. 10 still caps real spam/abuse while giving normal
+# use plenty of room.
+_MAX_NON_PLANT_ATTEMPTS_PER_DAY = 10
 
 
 async def get_latest_diagnosis(db: AsyncSession, user: User, plant_id: str) -> LatestDiagnosisData:
