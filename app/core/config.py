@@ -73,6 +73,19 @@ class Settings(BaseSettings):
     # a runaway client regardless of which tier is calling.
     ai_daily_call_limit: int = 10
 
+    # Species-facts cache (app/utils/species_cache.py) — a pure cost/latency
+    # optimization for identify_plant_by_name: repeat lookups of the same
+    # plant name (across ANY user — this is generic reference data, never
+    # user-specific) skip the Gemini call entirely on a hit. Leave blank to
+    # run on the built-in in-process fallback (works immediately, zero
+    # infra, resets on every deploy/restart — fine for a cache, since a
+    # miss just costs one more Gemini call, never a wrong answer). Set to a
+    # real Redis URL (self-hosted, or a free-tier managed one like Upstash
+    # — see that module's docstring for why Upstash over "self-hosted" on
+    # Render specifically) to make it survive restarts and be shared across
+    # multiple backend instances.
+    redis_url: str = ""
+
     # CORS
     cors_origins: str = "http://localhost:5173,capacitor://localhost,http://localhost"
 

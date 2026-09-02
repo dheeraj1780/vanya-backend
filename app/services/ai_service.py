@@ -14,6 +14,7 @@ from app.services.plant_service import get_plant_for_user
 from app.utils.ai_provider import diagnose_plant as call_ai_diagnose
 from app.utils.ai_provider import identify_plant as call_ai_identify
 from app.utils.ai_provider import identify_plant_by_name as call_ai_identify_by_name
+from app.utils.species_cache import get_cached_species, set_cached_species
 
 settings = get_settings()
 
@@ -141,7 +142,20 @@ async def identify_plant_by_name(db: AsyncSession, user: User, plant_name: str) 
         await _check_rate_limit(db, user)
         await _check_non_plant_abuse(db, user)
 
-        result = await call_ai_identify_by_name(plant_name)
+        # A hit here means some user, at some point, already typed this
+        # exact plant name — the answer is identical reference data for
+        # everyone (see species_cache's module docstring), so this skips
+        # straight past the Gemini call entirely. Allowance/rate-limit
+        # checks above and the log_ai_call bookkeeping below both still run
+        # exactly as if this were a fresh call — a cache hit still counts
+        # as "used your identify allowance", since the point of that
+        # allowance is rate-limiting the feature, not just Gemini's bill.
+        result = await get_cached_species(plant_name)
+        if result is None:
+            result = await call_ai_identify_by_name(plant_name)
+            if result.get("is_real_plant", True):
+                await set_cached_species(plant_name, result)
+
         is_real_plant = result.get("is_real_plant", True)
         if is_real_plant:
             await log_ai_call(db, user.user_id, "garden_setup" if used_garden_setup else "identify")
