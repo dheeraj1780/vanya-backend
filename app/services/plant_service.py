@@ -86,12 +86,15 @@ async def list_plants(
 
 
 async def check_plant_limit(db: AsyncSession, user: User) -> None:
-    """Raises before any caller (plant creation or AI identification)
-    proceeds, so a blocked user never costs an AI provider call. Thin
-    wrapper kept for call-site stability (ai_service imports this name) —
-    the actual tier-aware limit and messaging live in
-    entitlement_service.check_plant_slot_limit, the one place plan config
-    is read from."""
+    """Called by the two places that actually consume a garden slot —
+    create_plant (status='active') and move_to_garden — never by
+    identification itself (see ai_service.identify_plant's own docstring
+    for why that used to be wrong: a full garden doesn't mean there's
+    nowhere to put a freshly-identified plant, since wishlist has its own
+    separate capacity, and plenty of identifications are never saved
+    anywhere at all). Thin wrapper kept for call-site stability — the
+    actual tier-aware limit and messaging live in entitlement_service.
+    check_plant_slot_limit, the one place plan config is read from."""
     await check_plant_slot_limit(db, user)
 
 

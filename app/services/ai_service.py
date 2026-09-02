@@ -10,7 +10,7 @@ from app.repositories.diagnosis_repository import count_ai_calls_today, create_d
 from app.repositories.usage_repository import count_calls_since, utcnow
 from app.schemas.ai import DiagnoseData, DiagnoseRequest, IdentifyData, LatestDiagnosisData
 from app.services.entitlement_service import check_diagnose_limit, check_identification_limit
-from app.services.plant_service import check_plant_limit, get_plant_for_user
+from app.services.plant_service import get_plant_for_user
 from app.utils.ai_provider import diagnose_plant as call_ai_diagnose
 from app.utils.ai_provider import identify_plant as call_ai_identify
 
@@ -87,9 +87,20 @@ async def identify_plant(db: AsyncSession, user: User, image_base64: str) -> Ide
     populating an existing garden) or the regular recurring allowance —
     see entitlement_service for why Garden Setup is tried first. That
     allowance is only actually spent below once the result comes back and
-    turns out to be a real plant — see the log_ai_call branch."""
+    turns out to be a real plant — see the log_ai_call branch.
+
+    BUG FIX: this used to also call check_plant_limit (garden slot
+    capacity) up front, blocking identification outright the moment a
+    user's garden was full — even though identification has its own
+    completely separate weekly/monthly allowance, and a full garden
+    doesn't mean there's "nowhere to put this": wishlist has its own,
+    separate capacity (check_wishlist_limit), and plenty of people just
+    want to identify something without saving it anywhere at all. Garden
+    capacity is still enforced -- correctly, at the moment it actually
+    matters -- by create_plant (status='active') and move_to_garden, the
+    only two places that actually consume a garden slot. This function
+    only ever writes data on a save, never here."""
     try:
-        await check_plant_limit(db, user)
         used_garden_setup = await check_identification_limit(db, user)
         await _check_rate_limit(db, user)
         await _check_non_plant_abuse(db, user)
