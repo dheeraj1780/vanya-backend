@@ -8,6 +8,16 @@ class IdentifyRequest(BaseModel):
     image_base64: str
 
 
+class IdentifyByNameRequest(BaseModel):
+    """The "I already know this plant" path — no photo at all, just the
+    name the user already knows it by (common or scientific, any
+    spelling). Draws from the exact same ai_actions bucket as a normal
+    photo identify (see ai_service.identify_plant_by_name) since it's
+    still one Gemini call producing the same IdentifyData shape — just
+    text-in instead of image-in."""
+    plant_name: str = Field(min_length=1, max_length=100)
+
+
 class IdentifyData(BaseModel):
     species: str
     common_name: str

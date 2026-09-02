@@ -115,6 +115,80 @@ async def identify_plant(image_base64: str) -> Dict[str, Any]:
         raise ExternalProviderError(f"Unexpected error calling AI provider: {exc}") from exc
 
 
+IDENTIFY_BY_NAME_PROMPT_PREFIX = (
+    "A user who says they already know this plant typed its name as: "
+    # plant_name is interpolated right after this prefix — see
+    # identify_plant_by_name below.
+)
+
+IDENTIFY_BY_NAME_PROMPT_SUFFIX = (
+    ' First judge whether this genuinely names a real, living plant species — a common name, '
+    "vernacular/regional name, or scientific name, in any language or spelling the user might "
+    "reasonably use — as opposed to gibberish, a joke, or the name of something that plainly isn't "
+    "a plant. Respond ONLY with valid JSON, no other text, in this exact "
+    'shape: {"is_real_plant": boolean, "fun_message": string, "species": string, "common_name": '
+    'string, "regional_names": array of up to 4 strings, "confidence": "high"|"medium"|"low", '
+    '"water_frequency_days": number, "light_needs": string (max 4 words), "care_note": string '
+    '(max 20 words), "soil_type": string (max 4 words), "soil_amendments": string (max 20 words), '
+    '"fun_facts": array of 4 strings, each max 25 words, genuinely interesting '
+    'and specific to this species (not generic plant-care tips), '
+    '"is_indoor": boolean (true if commonly grown as a houseplant, false if primarily outdoor/garden), '
+    '"is_pet_safe": boolean (true only if non-toxic to cats and dogs if ingested — err toward false if uncertain), '
+    '"is_air_purifying": boolean (true if scientifically recognized for measurable air-purifying effect, '
+    'not just marketing claims), '
+    '"care_difficulty": "easy"|"moderate"|"hard" (based on how forgiving the plant is of missed '
+    'watering, variable light, and general neglect)}. '
+    'confidence here reflects how sure you are which exact species the user meant (a specific '
+    'cultivar name should be "high"; a broad/ambiguous common name shared by several species, e.g. '
+    '"cactus" or "fern", should be "low" and you should pick the single most common species people '
+    'mean by that name). '
+    'Every free-text field (fun_message, care_note, soil_amendments, fun_facts) must be written for a '
+    'total beginner with zero botany background — plain everyday words, no unexplained Latin or '
+    'technical jargon, nothing generic ("water regularly") — someone who has never grown a plant before '
+    'should immediately understand every sentence. '
+    'regional_names: this app\'s users are mostly in India — list the common household/vernacular '
+    'names this plant actually goes by there (Hindi and other widely-used regional names), e.g. '
+    '"Money Plant"/"Paisa Paudha" for Epipremnum aureum, "Tulsi" for holy basil, "Kadi Patta" for '
+    'curry leaf, "Ghritkumari" for Aloe vera. Give real, commonly-used names only — if this species '
+    'genuinely has no distinct household name in India, return an empty array rather than inventing '
+    'one. common_name/species stay in English/Latin as usual; regional_names is purely additive. '
+    'soil_type: name an actual soil type this plant thrives in, the way a home gardener in India '
+    'would shop for or describe it — e.g. "Red soil", "Black soil", "Sandy loam", "Laterite soil", '
+    '"Alluvial soil", or (for a plant normally grown in a pot rather than the ground) "Well-draining '
+    'potting mix". Pick whichever term is actually the best real answer for this species\' natural '
+    'preference — not a vague description, a named type. '
+    'soil_amendments: what to mix INTO that base soil_type for this species to grow at its best — '
+    'e.g. "Add compost, sand and cocopeat for drainage and moisture retention" or "Mix in perlite and '
+    'organic manure". Practical and specific to this plant\'s actual needs (drainage, moisture '
+    'retention, nutrients, pH), not generic filler. '
+    'If is_real_plant is false: set fun_message to one short, warm, playful sentence (max 30 words) '
+    'reacting specifically to what the user typed — never scold or sound like an error message. Every '
+    'other field still needs a real value (species/common_name can name what it looks like; use '
+    'reasonable defaults for the rest, regional_names can be empty) since the app always expects '
+    'them, but the client only shows fun_message to the user in this case. '
+    'If is_real_plant is true but the name is too vague/ambiguous to name one exact species with '
+    'reasonable confidence, set confidence to "low", leave fun_message as an empty string, and give '
+    'your best general guess, but still provide your best-effort values for every other field.'
+)
+
+
+async def identify_plant_by_name(plant_name: str) -> Dict[str, Any]:
+    """Text-only sibling of identify_plant — no image, no vision call. See
+    schemas/ai.py's IdentifyByNameRequest for why this exists and shares
+    identify's ai_actions cost."""
+    try:
+        client = _get_client()
+        response = await client.aio.models.generate_content(
+            model=settings.ai_model,
+            contents=[IDENTIFY_BY_NAME_PROMPT_PREFIX + json.dumps(plant_name) + IDENTIFY_BY_NAME_PROMPT_SUFFIX],
+        )
+        return _parse_json_response(response.text)
+    except APIError as exc:
+        raise ExternalProviderError(f"AI provider could not look up the plant: {exc}") from exc
+    except Exception as exc:
+        raise ExternalProviderError(f"Unexpected error calling AI provider: {exc}") from exc
+
+
 def _diagnose_prompt(species: str) -> str:
     return (
         f'This is a {species}. First image is the whole plant, second is a close-up of the '

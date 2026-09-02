@@ -13,6 +13,7 @@ from app.services.entitlement_service import check_ai_action_limit
 from app.services.plant_service import get_plant_for_user
 from app.utils.ai_provider import diagnose_plant as call_ai_diagnose
 from app.utils.ai_provider import identify_plant as call_ai_identify
+from app.utils.ai_provider import identify_plant_by_name as call_ai_identify_by_name
 
 settings = get_settings()
 
@@ -123,6 +124,35 @@ async def identify_plant(db: AsyncSession, user: User, image_base64: str) -> Ide
         raise
     except Exception as exc:
         raise InternalServerError(f"Failed to identify plant: {exc}") from exc
+
+
+async def identify_plant_by_name(db: AsyncSession, user: User, plant_name: str) -> IdentifyData:
+    """The "I already know this plant" path — same allowance, same
+    garden_setup priority, same call_type bookkeeping as identify_plant
+    (see check_ai_action_limit's action_type="identify" and the log_ai_call
+    branch below), just a text lookup instead of a vision call: no photo
+    is ever sent or required. Kept as a near-duplicate of identify_plant
+    rather than a shared helper because the two already diverge in one
+    real way (no rate/abuse-check photo to speak of, different provider
+    call) and forcing them through one function would need a branch at
+    nearly every line anyway."""
+    try:
+        used_garden_setup = await check_ai_action_limit(db, user, "identify")
+        await _check_rate_limit(db, user)
+        await _check_non_plant_abuse(db, user)
+
+        result = await call_ai_identify_by_name(plant_name)
+        is_real_plant = result.get("is_real_plant", True)
+        if is_real_plant:
+            await log_ai_call(db, user.user_id, "garden_setup" if used_garden_setup else "identify")
+        else:
+            await log_ai_call(db, user.user_id, "identify_not_plant")
+            used_garden_setup = False
+        return IdentifyData(**result, used_garden_setup=used_garden_setup)
+    except AppException:
+        raise
+    except Exception as exc:
+        raise InternalServerError(f"Failed to look up plant by name: {exc}") from exc
 
 
 async def diagnose_plant(db: AsyncSession, user: User, request: DiagnoseRequest) -> DiagnoseData:
