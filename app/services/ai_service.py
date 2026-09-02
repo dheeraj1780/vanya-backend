@@ -9,7 +9,7 @@ from app.repositories.diagnosis_read_repository import get_latest_diagnosis_for_
 from app.repositories.diagnosis_repository import count_ai_calls_today, create_diagnosis_log, log_ai_call
 from app.repositories.usage_repository import count_calls_since, utcnow
 from app.schemas.ai import DiagnoseData, DiagnoseRequest, IdentifyData, LatestDiagnosisData
-from app.services.entitlement_service import check_diagnose_limit, check_identification_limit
+from app.services.entitlement_service import check_ai_action_limit
 from app.services.plant_service import get_plant_for_user
 from app.utils.ai_provider import diagnose_plant as call_ai_diagnose
 from app.utils.ai_provider import identify_plant as call_ai_identify
@@ -82,9 +82,9 @@ async def identify_plant(db: AsyncSession, user: User, image_base64: str) -> Ide
     and before the external call, so a blocked user never costs an API call
     or consumes their daily quota.
 
-    check_identification_limit tells us whether this call should be
-    charged against the one-time Garden Setup allowance (new upgrader
-    populating an existing garden) or the regular recurring allowance —
+    check_ai_action_limit tells us whether this call should be charged
+    against the one-time Garden Setup allowance (new upgrader populating
+    an existing garden) or the regular recurring shared ai_actions pool —
     see entitlement_service for why Garden Setup is tried first. That
     allowance is only actually spent below once the result comes back and
     turns out to be a real plant — see the log_ai_call branch.
@@ -101,7 +101,7 @@ async def identify_plant(db: AsyncSession, user: User, image_base64: str) -> Ide
     only two places that actually consume a garden slot. This function
     only ever writes data on a save, never here."""
     try:
-        used_garden_setup = await check_identification_limit(db, user)
+        used_garden_setup = await check_ai_action_limit(db, user, "identify")
         await _check_rate_limit(db, user)
         await _check_non_plant_abuse(db, user)
 
@@ -127,7 +127,7 @@ async def identify_plant(db: AsyncSession, user: User, image_base64: str) -> Ide
 
 async def diagnose_plant(db: AsyncSession, user: User, request: DiagnoseRequest) -> DiagnoseData:
     try:
-        await check_diagnose_limit(db, user)
+        await check_ai_action_limit(db, user, "diagnose")
         await _check_rate_limit(db, user)
 
         plant = await get_plant_for_user(db, user, request.plant_id)

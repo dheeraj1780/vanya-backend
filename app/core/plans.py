@@ -55,12 +55,28 @@ plant_service.move_to_garden).
 GROWTH JOURNEY: dated, named photo memories on a plant's growth timeline
 (models.GrowthMemory) — a Green Thumb-and-up feature, gated by
 growth_memory_limit, not available to Guest/Plantie at all (0). Green
-Thumb's limit is deliberately 1 — a one-time taste of the feature (same
-one-time spirit as garden_setup_identifications) rather than a real
-ongoing timeline, which needs Photosynthesis PhD's unlimited allowance to
-actually be useful. Same PLANT COLLECTION RULES semantics as max_plants:
-cancelling a subscription never deletes or hides existing memories, it
-only blocks creating new ones past whatever the current tier allows.
+Thumb's limit is 4 — enough to be a real, usable feature at that tier
+(was 1 for a while, which read as a tease rather than something worth
+paying for), while Photosynthesis PhD's unlimited allowance is still the
+clear reason to go further for anyone who wants a real ongoing timeline.
+Same PLANT COLLECTION RULES semantics as max_plants: cancelling a
+subscription never deletes or hides existing memories, it only blocks
+creating new ones past whatever the current tier allows.
+
+AI ACTIONS: identification, Care Calculator, and diagnose used to be
+three fully independent allowances on three different clocks (weekly,
+weekly, monthly) — individually reasonable, but a genuinely confusing
+mental model for a new user (six numbers on five different reset
+schedules across the whole plan), and an arbitrary one too: they're the
+same underlying cost (one Gemini call), so there was no real reason
+someone who'd used up Care Calculator this week couldn't still identify
+a plant, yet the separate pools blocked exactly that. Collapsed into ONE
+shared `ai_actions` allowance instead — spend it on whichever of the
+three you actually want this week. Diagnose costs DIAGNOSE_ACTION_COST
+per call from that pool (it sends two photos, roughly double a single-
+photo identify/calculator call); identify and calculator cost 1 each.
+Guest's pool stays lifetime (a one-time trial, not an ongoing
+relationship — see TIER LADDER above); every signed-in tier's is weekly.
 """
 from dataclasses import dataclass
 from typing import Dict, Literal, Optional
@@ -72,6 +88,10 @@ Period = Literal["lifetime", "weekly", "monthly"]
 # it everywhere a limit is compared, so a future "unlimited" tier needs no
 # engine changes — just a new PlanConfig entry.
 UNLIMITED = -1
+
+# How many "AI actions" a diagnose call costs from the shared ai_actions
+# pool (see AI ACTIONS above) — identify and calculator each cost 1.
+DIAGNOSE_ACTION_COST = 2
 
 
 @dataclass(frozen=True)
@@ -91,16 +111,16 @@ class PlanConfig:
     max_plants: int  # persistent slots — never reset by time, see PLANT COLLECTION RULES
     wishlist_limit: int  # persistent slots for NOT-yet-owned plants, doesn't compete with max_plants
     garden_setup_identifications: int  # one-time allowance, 0 = tier grants none
-    identification: FeatureAllowance
-    care_calculator: FeatureAllowance
-    diagnose: FeatureAllowance
+    # One shared pool for identify + Care Calculator + diagnose — see the
+    # AI ACTIONS note above for why these were unified from three separate
+    # allowances into one.
+    ai_actions: FeatureAllowance
     # Growth Journey — persistent slots for dated photo memories on a
     # plant's growth timeline, same PLANT COLLECTION RULES semantics as
     # max_plants (a downgrade never deletes/hides existing memories, only
     # blocks creating new ones past this count — see
     # entitlement_service.check_growth_memory_limit). 0 = tier doesn't get
-    # the feature at all. Green Thumb's 1 is deliberately a one-time taste
-    # of the feature, not a real timeline — see plans.py's TIER LADDER note.
+    # the feature at all.
     growth_memory_limit: int
     # Razorpay Plan ID (Subscriptions > Plans in the Razorpay dashboard).
     # None for the two free tiers, which are never purchased — Plantie is
@@ -119,9 +139,7 @@ PLANS: Dict[str, PlanConfig] = {
         max_plants=3,
         wishlist_limit=3,
         garden_setup_identifications=0,
-        identification=FeatureAllowance(3, "lifetime"),
-        care_calculator=FeatureAllowance(3, "lifetime"),
-        diagnose=FeatureAllowance(1, "lifetime"),
+        ai_actions=FeatureAllowance(6, "lifetime"),
         growth_memory_limit=0,
     ),
     "plantie": PlanConfig(
@@ -134,9 +152,7 @@ PLANS: Dict[str, PlanConfig] = {
         max_plants=5,
         wishlist_limit=5,
         garden_setup_identifications=0,
-        identification=FeatureAllowance(3, "weekly"),
-        care_calculator=FeatureAllowance(3, "weekly"),
-        diagnose=FeatureAllowance(1, "monthly"),
+        ai_actions=FeatureAllowance(6, "weekly"),
         growth_memory_limit=0,
     ),
     "green_thumb": PlanConfig(
@@ -149,10 +165,8 @@ PLANS: Dict[str, PlanConfig] = {
         max_plants=10,
         wishlist_limit=20,
         garden_setup_identifications=10,
-        identification=FeatureAllowance(7, "weekly"),
-        care_calculator=FeatureAllowance(7, "weekly"),
-        diagnose=FeatureAllowance(2, "monthly"),
-        growth_memory_limit=1,
+        ai_actions=FeatureAllowance(15, "weekly"),
+        growth_memory_limit=4,
         razorpay_plan_id="plan_TRk4u6iPqBbxmL",
     ),
     "photosynthesis_phd": PlanConfig(
@@ -165,9 +179,7 @@ PLANS: Dict[str, PlanConfig] = {
         max_plants=25,
         wishlist_limit=50,
         garden_setup_identifications=25,
-        identification=FeatureAllowance(10, "weekly"),
-        care_calculator=FeatureAllowance(20, "weekly"),
-        diagnose=FeatureAllowance(5, "monthly"),
+        ai_actions=FeatureAllowance(35, "weekly"),
         growth_memory_limit=UNLIMITED,
         razorpay_plan_id="plan_TRk5QYflkJTWAp",
     ),

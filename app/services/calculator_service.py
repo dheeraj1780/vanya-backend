@@ -28,7 +28,7 @@ from app.models.plant import Plant
 from app.models.user import User
 from app.repositories.diagnosis_repository import count_ai_calls_today, log_ai_call
 from app.schemas.calculator import CalculatorData, FertilizerDoseResult, LightFitResult, LocationWeatherPreview, WateringScheduleResult
-from app.services.entitlement_service import check_calculator_limit
+from app.services.entitlement_service import check_ai_action_limit
 from app.services.plant_service import get_plant_for_user
 from app.utils.ai_provider import calculate_care as call_ai_calculate
 from app.utils.weather_client import get_current_weather, season_for_latitude
@@ -208,9 +208,9 @@ async def preview_location_weather(latitude: float, longitude: float) -> Locatio
     Care Calculator screen show what "auto-detect from your location" will
     actually resolve to right after location permission is granted, instead
     of only after the user presses Calculate. Deliberately separate from
-    compute_care_calculators: no plant, no calculator-usage limit consumed
-    (check_calculator_limit) and no AI call — this is just showing weather,
-    not "using" the calculator feature."""
+    compute_care_calculators: no plant, nothing drawn from the shared
+    ai_actions pool (check_ai_action_limit) and no AI call — this is just
+    showing weather, not "using" the calculator feature."""
     try:
         weather = await get_current_weather(latitude, longitude)
         return LocationWeatherPreview(season=weather["season"], temperature_c=weather["temperature_c"])
@@ -232,11 +232,12 @@ async def compute_care_calculators(
 ) -> CalculatorData:
     try:
         # Tier-limit check, distinct from the daily AI-cost safety net
-        # below: this is a hard stop with an upgrade prompt (per-tier
-        # weekly/lifetime allowance from plans.py), not a silent
-        # formula-fallback — a Care Calculator run always "uses" the
-        # feature whether or not AI was available for it.
-        await check_calculator_limit(db, user)
+        # below: this is a hard stop with an upgrade prompt (draws 1 from
+        # the shared ai_actions pool, same as identify — see plans.py's
+        # AI ACTIONS note), not a silent formula-fallback — a Care
+        # Calculator run always "uses" the feature whether or not AI was
+        # available for it.
+        await check_ai_action_limit(db, user, "calculator")
         plant = await get_plant_for_user(db, user, plant_id)
 
         temperature_c: Optional[float] = None

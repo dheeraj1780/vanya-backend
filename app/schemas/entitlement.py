@@ -5,10 +5,15 @@ from pydantic import BaseModel
 
 
 class FeatureUsage(BaseModel):
-    """One feature's (identification / care calculator / diagnose) usage
-    against its current allowance. `limit`/`remaining` of -1 means
-    unlimited (see plans.UNLIMITED) — no current tier uses this, but the
-    engine and this schema both already support it for a future tier."""
+    """Usage against the shared "AI actions" allowance — identify, Care
+    Calculator, and diagnose all draw from this ONE pool now (see
+    entitlement_service's module docstring and plans.py's AI ACTIONS note
+    for why three separate allowances on three different clocks got
+    collapsed into one). `used`/`remaining` are in action units, not raw
+    call counts — diagnose costs more than 1 per call (plans.
+    DIAGNOSE_ACTION_COST). `limit`/`remaining` of -1 means unlimited (see
+    plans.UNLIMITED) — no current tier uses this, but the engine and this
+    schema both already support it for a future tier."""
     used: int
     limit: int
     period: Literal["lifetime", "weekly", "monthly"]
@@ -52,9 +57,9 @@ class EntitlementData(BaseModel):
     plant_count: int
     plant_limit: int
     wishlist: WishlistData
-    identification: FeatureUsage
-    care_calculator: FeatureUsage
-    diagnose: FeatureUsage
+    # Identify + Care Calculator + diagnose, unified — see FeatureUsage's
+    # own docstring.
+    ai_actions: FeatureUsage
     garden_setup: GardenSetupData
     growth_memories: GrowthMemoryData
     # The next tier up, for "upgrade to X for Y" prompts — null at the top

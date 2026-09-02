@@ -9,13 +9,15 @@ hardcode limits throughout the application" means in practice: the only
 numbers live in app/core/plans.py, and the only *logic* for comparing
 usage against them lives here.
 
-Identification, Care Calculator, and Diagnose are tracked as three fully
-independent counters (see usage_repository, all reading AI_CALL_LOG
-filtered by call_type) — using up your weekly Care Calculator allowance
-never touches your identification or diagnose allowance, and vice versa.
-Plant slots are a separate, non-resetting concept entirely (see
-check_plant_slot_limit / PLANT COLLECTION RULES in the product spec this
-was built from).
+Identification, Care Calculator, and Diagnose share ONE weekly (guest:
+lifetime) "AI actions" pool — see plans.py's own AI ACTIONS note for why
+this used to be three fully independent counters on three different
+clocks, and why that was a real UX problem (six numbers on five reset
+schedules) worth collapsing, not just a display simplification: diagnose
+draws DIAGNOSE_ACTION_COST from the shared pool per call, identify and
+calculator draw 1 each. Plant slots are a separate, non-resetting concept
+entirely (see check_plant_slot_limit / PLANT COLLECTION RULES in the
+product spec this was built from).
 """
 from datetime import datetime, timedelta
 from typing import Optional
@@ -23,12 +25,18 @@ from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import AppException, GuestSignInRequiredError, InternalServerError, PlanLimitExceededError
-from app.core.plans import FeatureAllowance, PlanConfig, next_tier, plan_for
+from app.core.plans import DIAGNOSE_ACTION_COST, FeatureAllowance, PlanConfig, next_tier, plan_for
 from app.models.user import User
 from app.repositories.billing_repository import get_subscription_by_user
 from app.repositories.plant_repository import count_growth_memories_by_user, count_plants_by_user
 from app.repositories.usage_repository import count_calls_since, oldest_call_since, utcnow
 from app.schemas.entitlement import EntitlementData, FeatureUsage, GardenSetupData, GrowthMemoryData, WishlistData
+
+# The three call_types that draw from the shared ai_actions pool, and what
+# each one costs per call — diagnose sends two photos, roughly double a
+# single-photo identify/calculator call. Order doesn't matter; every use
+# below either sums over all three or checks membership.
+_AI_ACTION_COSTS = {"identify": 1, "calculator": 1, "diagnose": DIAGNOSE_ACTION_COST}
 
 
 def plan_for_user(user: User) -> PlanConfig:
@@ -55,10 +63,17 @@ def _next_month_start(now: datetime) -> datetime:
     return now.replace(month=now.month + 1, day=1, hour=0, minute=0, second=0, microsecond=0)
 
 
-async def _feature_usage(db: AsyncSession, user: User, call_type: str, allowance: FeatureAllowance) -> FeatureUsage:
+async def _ai_action_usage(db: AsyncSession, user: User, allowance: FeatureAllowance) -> FeatureUsage:
+    """Sums weighted usage across identify + calculator + diagnose (see
+    _AI_ACTION_COSTS) against the one shared pool — the replacement for
+    what used to be three separate _feature_usage calls against three
+    separate allowances. `used` is in "action" units, not raw call counts
+    (a diagnose call counts as DIAGNOSE_ACTION_COST actions, not 1)."""
     now = utcnow()
     since = _period_since(allowance.period, now)
-    used = await count_calls_since(db, user.user_id, call_type, since)
+    used = 0
+    for call_type, cost in _AI_ACTION_COSTS.items():
+        used += await count_calls_since(db, user.user_id, call_type, since) * cost
 
     if allowance.limit < 0:  # UNLIMITED — no current tier uses this, but honored end-to-end regardless
         return FeatureUsage(used=used, limit=-1, period=allowance.period, remaining=-1, resets_at=None)
@@ -66,12 +81,20 @@ async def _feature_usage(db: AsyncSession, user: User, call_type: str, allowance
     remaining = max(0, allowance.limit - used)
 
     resets_at: Optional[datetime] = None
-    if used > 0:
-        if allowance.period == "weekly":
-            oldest = await oldest_call_since(db, user.user_id, call_type, since)  # type: ignore[arg-type]
-            resets_at = oldest + timedelta(days=7) if oldest else None
-        elif allowance.period == "monthly":
-            resets_at = _next_month_start(now)
+    if used > 0 and since is not None:
+        # Earliest call of ANY of the three types within the window — the
+        # pool resets 7 days after whichever action started using it up.
+        oldest_candidates = [
+            oldest
+            for call_type in _AI_ACTION_COSTS
+            if (oldest := await oldest_call_since(db, user.user_id, call_type, since)) is not None
+        ]
+        if oldest_candidates:
+            oldest = min(oldest_candidates)
+            if allowance.period == "weekly":
+                resets_at = oldest + timedelta(days=7)
+            elif allowance.period == "monthly":
+                resets_at = _next_month_start(now)
         # lifetime never resets — resets_at stays None
 
     return FeatureUsage(used=used, limit=allowance.limit, period=allowance.period, remaining=remaining, resets_at=resets_at)
@@ -93,9 +116,7 @@ async def get_entitlement(db: AsyncSession, user: User) -> EntitlementData:
         plan = plan_for_user(user)
         plant_count = await count_plants_by_user(db, user.user_id, status="active")
         wishlist_count = await count_plants_by_user(db, user.user_id, status="wishlist")
-        identification = await _feature_usage(db, user, "identify", plan.identification)
-        care_calculator = await _feature_usage(db, user, "calculator", plan.care_calculator)
-        diagnose = await _feature_usage(db, user, "diagnose", plan.diagnose)
+        ai_actions = await _ai_action_usage(db, user, plan.ai_actions)
         garden_setup = await _garden_setup_status(db, user, plan)
         growth_memory_count = await count_growth_memories_by_user(db, user.user_id)
         nxt = next_tier(plan.key)
@@ -111,9 +132,7 @@ async def get_entitlement(db: AsyncSession, user: User) -> EntitlementData:
             plant_count=plant_count,
             plant_limit=plan.max_plants,
             wishlist=WishlistData(count=wishlist_count, limit=plan.wishlist_limit),
-            identification=identification,
-            care_calculator=care_calculator,
-            diagnose=diagnose,
+            ai_actions=ai_actions,
             garden_setup=garden_setup,
             growth_memories=GrowthMemoryData(count=growth_memory_count, limit=plan.growth_memory_limit),
             next_plan=nxt.key if nxt else None,
@@ -149,55 +168,45 @@ def _raise_feature_limit(user: User, plan: PlanConfig, feature_display: str, per
     )
 
 
-async def check_identification_limit(db: AsyncSession, user: User) -> bool:
-    """Raises if blocked. Otherwise returns whether this identify call
-    should be logged as "garden_setup" (True) or the regular recurring
-    "identify" counter (False) — the garden-setup allowance is always
-    drawn down first when any of it remains, so a user who just upgraded
-    never has to wait days to digitize plants they already own (see
-    plans.py's garden_setup_identifications)."""
+async def check_ai_action_limit(db: AsyncSession, user: User, action_type: str) -> bool:
+    """Unified check for identify/calculator/diagnose — all three now draw
+    from ONE shared ai_actions pool instead of three separately-tracked
+    allowances on three different clocks (see plans.py's AI ACTIONS note
+    and this module's own docstring for why). `action_type` is one of
+    "identify" / "calculator" / "diagnose" — used to look up this call's
+    cost in _AI_ACTION_COSTS and to phrase the right message if blocked.
+
+    Raises if blocked. Otherwise returns whether an identify call should
+    be logged as "garden_setup" (True) instead of drawing from the shared
+    pool at all — the garden-setup allowance is always drawn down first
+    when any of it remains and only ever applies to identify, so a user
+    who just upgraded never has to wait days to digitize plants they
+    already own (see plans.py's garden_setup_identifications). Always
+    False for calculator/diagnose calls."""
     plan = plan_for_user(user)
+    cost = _AI_ACTION_COSTS[action_type]
 
-    garden_setup = await _garden_setup_status(db, user, plan)
-    if garden_setup.remaining > 0:
-        return True
+    if action_type == "identify":
+        garden_setup = await _garden_setup_status(db, user, plan)
+        if garden_setup.remaining > 0:
+            return True
 
-    usage = await _feature_usage(db, user, "identify", plan.identification)
-    if usage.remaining == 0:
+    usage = await _ai_action_usage(db, user, plan.ai_actions)
+    if usage.remaining < cost:
         if usage.period == "weekly":
-            period_phrase = "this week's plant identifications"
+            period_phrase = "this week's AI actions"
+        elif usage.period == "monthly":
+            period_phrase = "this month's AI actions"
         else:
-            period_phrase = f"your {_plural(usage.limit, 'free plant identification')} as a guest"
+            period_phrase = f"your {_plural(usage.limit, 'free AI action')} as a guest"
         nxt = next_tier(plan.key)
-        next_phrase = f"{_plural(nxt.identification.limit, 'identification')} every week" if nxt else ""
-        _raise_feature_limit(user, plan, "plants", period_phrase, next_phrase)
+        next_phrase = f"{_plural(nxt.ai_actions.limit, 'AI action')} every week" if nxt else ""
+        # "AI actions" doubles as the feature_display here too — identify,
+        # Care Calculator, and diagnose all share the exact same pool now,
+        # so there's no single narrower noun ("plants"/"diagnoses") that
+        # would still be accurate regardless of which one triggered this.
+        _raise_feature_limit(user, plan, "AI actions", period_phrase, next_phrase)
     return False
-
-
-async def check_calculator_limit(db: AsyncSession, user: User) -> None:
-    plan = plan_for_user(user)
-    usage = await _feature_usage(db, user, "calculator", plan.care_calculator)
-    if usage.remaining == 0:
-        if usage.period == "weekly":
-            period_phrase = "this week's Care Calculator allowance"
-        else:
-            period_phrase = f"your {_plural(usage.limit, 'free Care Calculator use')} as a guest"
-        nxt = next_tier(plan.key)
-        next_phrase = f"{_plural(nxt.care_calculator.limit, 'use')} every week" if nxt else ""
-        _raise_feature_limit(user, plan, "calculator uses", period_phrase, next_phrase)
-
-
-async def check_diagnose_limit(db: AsyncSession, user: User) -> None:
-    plan = plan_for_user(user)
-    usage = await _feature_usage(db, user, "diagnose", plan.diagnose)
-    if usage.remaining == 0:
-        if usage.period == "monthly":
-            period_phrase = "this month's diagnosis allowance"
-        else:
-            period_phrase = f"your {_plural(usage.limit, 'free diagnosis', 'free diagnoses')} as a guest"
-        nxt = next_tier(plan.key)
-        next_phrase = f"{_plural(nxt.diagnose.limit, 'diagnosis', 'diagnoses')} every month" if nxt else ""
-        _raise_feature_limit(user, plan, "diagnoses", period_phrase, next_phrase)
 
 
 async def check_plant_slot_limit(db: AsyncSession, user: User) -> None:

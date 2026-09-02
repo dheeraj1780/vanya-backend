@@ -30,9 +30,9 @@ class IdentifyData(BaseModel):
     is_air_purifying: bool
     care_difficulty: Literal["easy", "moderate", "hard"]
     # True if this call was charged against the one-time Garden Setup
-    # allowance (see entitlement_service.check_identification_limit)
-    # instead of the regular recurring weekly allowance — the client uses
-    # this to show "Garden setup X of Y" instead of the usual weekly copy.
+    # allowance (see entitlement_service.check_ai_action_limit) instead of
+    # the shared recurring ai_actions pool — the client uses this to show
+    # "Garden setup X of Y" instead of the usual weekly copy.
     used_garden_setup: bool = False
     # BUG-C003: the old prompt forced a confident-looking species guess out
     # of every image, including artificial plants and non-plant objects —

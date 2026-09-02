@@ -129,6 +129,6 @@ class AiCallLog(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.user_id"), index=True, nullable=False)
     # identify | garden_setup (a one-time-allowance identify, see
-    # entitlement_service.check_identification_limit) | diagnose | calculator
+    # entitlement_service.check_ai_action_limit) | diagnose | calculator
     call_type: Mapped[str] = mapped_column(String(20), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
