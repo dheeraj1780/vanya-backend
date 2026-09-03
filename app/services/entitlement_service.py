@@ -13,11 +13,12 @@ Identification, Care Calculator, and Diagnose share ONE weekly (guest:
 lifetime) "AI actions" pool — see plans.py's own AI ACTIONS note for why
 this used to be three fully independent counters on three different
 clocks, and why that was a real UX problem (six numbers on five reset
-schedules) worth collapsing, not just a display simplification: diagnose
-draws DIAGNOSE_ACTION_COST from the shared pool per call, identify and
-calculator draw 1 each. Plant slots are a separate, non-resetting concept
-entirely (see check_plant_slot_limit / PLANT COLLECTION RULES in the
-product spec this was built from).
+schedules) worth collapsing, not just a display simplification. All
+three draw DIAGNOSE_ACTION_COST=1 from the shared pool per call now —
+even weighting, see plans.py for why diagnose's old 2x weight didn't
+actually hold up against real Gemini per-token pricing. Plant slots are
+a separate, non-resetting concept entirely (see check_plant_slot_limit /
+PLANT COLLECTION RULES in the product spec this was built from).
 """
 from datetime import datetime, timedelta
 from typing import Optional
@@ -33,9 +34,10 @@ from app.repositories.usage_repository import count_calls_since, oldest_call_sin
 from app.schemas.entitlement import EntitlementData, FeatureUsage, GardenSetupData, GrowthMemoryData, WishlistData
 
 # The three call_types that draw from the shared ai_actions pool, and what
-# each one costs per call — diagnose sends two photos, roughly double a
-# single-photo identify/calculator call. Order doesn't matter; every use
-# below either sums over all three or checks membership.
+# each one costs per call — all three cost the same now (see plans.py's
+# AI ACTIONS note on why diagnose's old 2x weight got dropped). Order
+# doesn't matter; every use below either sums over all three or checks
+# membership.
 _AI_ACTION_COSTS = {"identify": 1, "calculator": 1, "diagnose": DIAGNOSE_ACTION_COST}
 
 
@@ -67,8 +69,10 @@ async def _ai_action_usage(db: AsyncSession, user: User, allowance: FeatureAllow
     """Sums weighted usage across identify + calculator + diagnose (see
     _AI_ACTION_COSTS) against the one shared pool — the replacement for
     what used to be three separate _feature_usage calls against three
-    separate allowances. `used` is in "action" units, not raw call counts
-    (a diagnose call counts as DIAGNOSE_ACTION_COST actions, not 1)."""
+    separate allowances. `used` is in "action" units (currently 1:1 with
+    raw call counts, since _AI_ACTION_COSTS is evenly weighted — kept as
+    a weighted sum rather than a plain count in case a future action type
+    ever needs a different weight again)."""
     now = utcnow()
     since = _period_since(allowance.period, now)
     used = 0

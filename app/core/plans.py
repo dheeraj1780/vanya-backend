@@ -78,11 +78,32 @@ same underlying cost (one Gemini call), so there was no real reason
 someone who'd used up Care Calculator this week couldn't still identify
 a plant, yet the separate pools blocked exactly that. Collapsed into ONE
 shared `ai_actions` allowance instead — spend it on whichever of the
-three you actually want this week. Diagnose costs DIAGNOSE_ACTION_COST
-per call from that pool (it sends two photos, roughly double a single-
-photo identify/calculator call); identify and calculator cost 1 each.
-Guest's pool stays lifetime (a one-time trial, not an ongoing
+three you actually want this week. All three cost 1 unit each — diagnose
+used to cost DIAGNOSE_ACTION_COST=2 ("two photos, roughly double a
+single-photo call"), which sounded right but wasn't: priced out against
+Gemini's actual per-token rates, identify's OUTPUT (four fun facts, soil
+info, regional names) makes it cost about the same real money as
+diagnose's two smaller-output images (~$0.0013 vs ~$0.0011 per call,
+gemini-3.5-flash-lite, Sept 2026 pricing) — nowhere near double. Equal
+weighting is both more accurate and permanently removes the "I did 3
+things, why does it say 4" confusion a real user hit under the 2x
+weighting. Guest's pool stays lifetime (a one-time trial, not an ongoing
 relationship — see TIER LADDER above); every signed-in tier's is weekly.
+
+ALLOWANCE SIZING (revised after a cost/market pass — see the session
+this was decided in): at ~$0.001-0.0013/action on gemini-3.5-flash-lite,
+even Photosynthesis PhD's full weekly allowance costs under $0.30/month
+in real Gemini spend against ₹199 revenue — 85%+ gross margin on AI
+compute regardless of tier, before counting the 0% Play Store commission
+this app's billing model already secures (see billing_service.py).
+Storage (R2, growth-memory photos) is similarly immaterial even at
+"unlimited". Cost was never the real constraint on these numbers; tier
+differentiation and competitive positioning were. PictureThis's FREE
+tier alone gives ~35 IDs/week; this app's old top PAID tier capped at
+the same 35/week combined across all three actions — stingier on our
+best paid tier than a competitor's free one, in a category where
+PlantNet is free and uncapped. Revised to stay clearly tier-
+differentiated while no longer looking ungenerous next to the market.
 """
 from dataclasses import dataclass
 from typing import Dict, Literal, Optional
@@ -96,8 +117,12 @@ Period = Literal["lifetime", "weekly", "monthly"]
 UNLIMITED = -1
 
 # How many "AI actions" a diagnose call costs from the shared ai_actions
-# pool (see AI ACTIONS above) — identify and calculator each cost 1.
-DIAGNOSE_ACTION_COST = 2
+# pool (see AI ACTIONS above) — identify and calculator each cost 1 too.
+# Was 2; priced out against real Gemini rates and found to cost about the
+# same as identify, not double, so evened out. Kept as a named constant
+# (not just inlined as 1) since entitlement_service._AI_ACTION_COSTS and
+# the client mirrors both still reference it explicitly.
+DIAGNOSE_ACTION_COST = 1
 
 
 @dataclass(frozen=True)
@@ -145,7 +170,7 @@ PLANS: Dict[str, PlanConfig] = {
         max_plants=3,
         wishlist_limit=3,
         garden_setup_identifications=0,
-        ai_actions=FeatureAllowance(6, "lifetime"),
+        ai_actions=FeatureAllowance(8, "lifetime"),
         growth_memory_limit=0,
     ),
     "plantie": PlanConfig(
@@ -158,7 +183,7 @@ PLANS: Dict[str, PlanConfig] = {
         max_plants=5,
         wishlist_limit=5,
         garden_setup_identifications=0,
-        ai_actions=FeatureAllowance(6, "weekly"),
+        ai_actions=FeatureAllowance(10, "weekly"),
         growth_memory_limit=0,
     ),
     "green_thumb": PlanConfig(
@@ -171,7 +196,7 @@ PLANS: Dict[str, PlanConfig] = {
         max_plants=10,
         wishlist_limit=20,
         garden_setup_identifications=10,
-        ai_actions=FeatureAllowance(15, "weekly"),
+        ai_actions=FeatureAllowance(25, "weekly"),
         growth_memory_limit=4,
         razorpay_plan_id="plan_TRk4u6iPqBbxmL",
     ),
@@ -185,7 +210,7 @@ PLANS: Dict[str, PlanConfig] = {
         max_plants=25,
         wishlist_limit=50,
         garden_setup_identifications=25,
-        ai_actions=FeatureAllowance(35, "weekly"),
+        ai_actions=FeatureAllowance(60, "weekly"),
         growth_memory_limit=UNLIMITED,
         razorpay_plan_id="plan_TRk5QYflkJTWAp",
     ),
