@@ -254,7 +254,7 @@ async def create_growth_memory(db: AsyncSession, user: User, plant_id: str, requ
         # Checked before the (real, storage-costing) photo upload, same
         # ordering principle as check_plant_limit before an AI identify
         # call — a blocked user never costs an upload.
-        await check_growth_memory_limit(db, user)
+        await check_growth_memory_limit(db, user, plant_id)
         photo_url = await save_growth_photo(request.image_base64, plant.plant_id)
         memory = await create_growth_memory_repo(
             db, plant_id=plant.plant_id, user_id=user.user_id, name=request.name, note=request.note, photo_url=photo_url

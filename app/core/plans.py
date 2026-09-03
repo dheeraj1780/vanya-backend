@@ -54,13 +54,19 @@ plant_service.move_to_garden).
 
 GROWTH JOURNEY: dated, named photo memories on a plant's growth timeline
 (models.GrowthMemory) — a Green Thumb-and-up feature, gated by
-growth_memory_limit, not available to Guest/Plantie at all (0). Green
-Thumb's limit is 4 — enough to be a real, usable feature at that tier
+growth_memory_limit, not available to Guest/Plantie at all (0).
+growth_memory_limit is PER PLANT, not account-wide — Green Thumb's 4
+means every plant gets its own 4 memories, not 4 shared across the whole
+garden (a shared account-wide pool used to mean a Green Thumb user's
+5th+ plant could never get a single memory once memories elsewhere in
+their garden had used up the pool, which contradicted the "enough to be
+a real, usable feature at that tier" reasoning below outright — see
+entitlement_service.check_growth_memory_limit). Green Thumb's limit is 4
 (was 1 for a while, which read as a tease rather than something worth
 paying for), while Photosynthesis PhD's unlimited allowance is still the
 clear reason to go further for anyone who wants a real ongoing timeline.
-Same PLANT COLLECTION RULES semantics as max_plants: cancelling a
-subscription never deletes or hides existing memories, it only blocks
+Same PLANT COLLECTION RULES semantics as max_plants otherwise: cancelling
+a subscription never deletes or hides existing memories, it only blocks
 creating new ones past whatever the current tier allows.
 
 AI ACTIONS: identification, Care Calculator, and diagnose used to be

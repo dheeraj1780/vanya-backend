@@ -191,16 +191,33 @@ async def get_growth_memory_by_id(db: AsyncSession, memory_id: str) -> Optional[
 
 
 async def count_growth_memories_by_user(db: AsyncSession, user_id: str) -> int:
-    """Persistent count, not a recurring credit — same PLANT COLLECTION
-    RULES reasoning as count_plants_by_user: a downgrade never deletes or
-    hides existing memories, entitlement_service.check_growth_memory_limit
-    only uses this to block *creating new ones* past the current tier's
-    growth_memory_limit."""
+    """Account-wide total, across every plant — display-only now (the
+    Plan screen's "X saved across your garden" line). NOT what gates
+    creating a new one any more — see count_growth_memories_by_plant for
+    that, and entitlement_service.check_growth_memory_limit for why the
+    two were split apart."""
     try:
         result = await db.execute(select(func.count(GrowthMemory.memory_id)).where(GrowthMemory.user_id == user_id))
         return result.scalar_one()
     except Exception as exc:
         raise InternalServerError(f"Failed to count growth memories: {exc}") from exc
+
+
+async def count_growth_memories_by_plant(db: AsyncSession, plant_id: str) -> int:
+    """The number that actually gates creating a new memory — see
+    entitlement_service.check_growth_memory_limit. Growth Journey is a
+    per-plant photo timeline; growth_memory_limit is "up to N per plant",
+    not "N total across your whole garden" (that used to be the
+    behavior, and it meant a Green Thumb user's 5th+ plant could never
+    get a single memory once their OTHER plants had used up the shared
+    account-wide pool — confusing, and it directly contradicted plans.
+    py's own GROWTH JOURNEY note calling 4 "enough to be a real, usable
+    feature at that tier")."""
+    try:
+        result = await db.execute(select(func.count(GrowthMemory.memory_id)).where(GrowthMemory.plant_id == plant_id))
+        return result.scalar_one()
+    except Exception as exc:
+        raise InternalServerError(f"Failed to count growth memories for this plant: {exc}") from exc
 
 
 async def create_growth_memory(

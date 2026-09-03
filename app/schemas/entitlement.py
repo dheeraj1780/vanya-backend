@@ -43,7 +43,16 @@ class GrowthMemoryData(BaseModel):
     """Growth Journey usage — see entitlement_service.check_growth_memory_limit
     and plans.py's GROWTH JOURNEY note. Persistent like plant_count/plant_limit
     (limit=0 means the current tier doesn't have the feature at all;
-    limit=-1 means unlimited, see plans.UNLIMITED)."""
+    limit=-1 means unlimited, see plans.UNLIMITED).
+
+    NOT a matched used/limit pair like every other FeatureUsage-shaped
+    field on EntitlementData: `limit` is a PER-PLANT cap (every plant
+    gets its own N), while `count` is an account-wide total across every
+    plant, shown only as an informational "saved across your garden"
+    figure — comparing them directly (count/limit) would misrepresent
+    the real per-plant limit. See GrowthJourneyScreen on the client for
+    the actual used/limit figure that matters to a specific plant (its
+    own memories.length against this same `limit`)."""
     count: int
     limit: int
 
