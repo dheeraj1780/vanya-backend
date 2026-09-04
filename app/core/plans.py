@@ -163,7 +163,7 @@ PLANS: Dict[str, PlanConfig] = {
     "guest": PlanConfig(
         key="guest",
         display_name="Guest",
-        tagline="Try VANYA before you sign in.",
+        tagline="Try Vanya before you sign in.",
         emoji="🌾",
         price_inr=0,
         billing="none",

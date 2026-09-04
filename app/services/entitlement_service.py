@@ -233,7 +233,7 @@ async def check_plant_slot_limit(db: AsyncSession, user: User) -> None:
 
     if user.is_guest:
         raise GuestSignInRequiredError(
-            f"You've discovered {plan.max_plants} plants with VANYA. Sign in to become a Plantie and keep growing your garden."
+            f"You've discovered {plan.max_plants} plants with Vanya. Sign in to become a Plantie and keep growing your garden."
         )
     nxt = next_tier(plan.key)
     if nxt is None:
