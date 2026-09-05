@@ -54,6 +54,7 @@ from app.utils.razorpay_client import (
     update_subscription_plan as razorpay_update_subscription_plan,
     verify_webhook_signature,
 )
+from app.utils.time_utils import naive_utc
 
 settings = get_settings()
 logger = logging.getLogger("plant_companion")
@@ -118,7 +119,14 @@ async def create_subscription(db: AsyncSession, user: User, plan_key: str) -> Cr
                 if existing.cancel_scheduled and existing.product_id == plan.razorpay_plan_id:
                     return await _resume_subscription(db, user, existing)
                 raise BadRequestError("You already have an active subscription — manage it from the Account page.")
-            if existing.status == "created" and existing.updated_at > datetime.utcnow() - PENDING_SUBSCRIBE_COOLDOWN:
+            # naive_utc(): existing.updated_at round-trips timezone-aware
+            # from Postgres (every timestamp column here uses
+            # DateTime(timezone=True)) but datetime.utcnow() is naive —
+            # comparing them directly raised "can't compare offset-naive
+            # and offset-aware datetimes" the first time this path was hit
+            # by a real (not just test-mode) pending subscription. See
+            # utils/time_utils.py's module docstring for the full story.
+            if existing.status == "created" and naive_utc(existing.updated_at) > datetime.utcnow() - PENDING_SUBSCRIBE_COOLDOWN:
                 raise BadRequestError("A subscription attempt is already in progress — finish that checkout, or wait a few minutes and try again.")
 
         result = await razorpay_create_subscription(plan.razorpay_plan_id, user.user_id)
