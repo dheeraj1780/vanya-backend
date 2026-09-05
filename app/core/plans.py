@@ -198,7 +198,7 @@ PLANS: Dict[str, PlanConfig] = {
         garden_setup_identifications=10,
         ai_actions=FeatureAllowance(25, "weekly"),
         growth_memory_limit=4,
-        razorpay_plan_id="plan_TRk4u6iPqBbxmL",
+        razorpay_plan_id="plan_TYUBhLLGgEQBAP",
     ),
     "photosynthesis_phd": PlanConfig(
         key="photosynthesis_phd",
@@ -212,7 +212,7 @@ PLANS: Dict[str, PlanConfig] = {
         garden_setup_identifications=25,
         ai_actions=FeatureAllowance(60, "weekly"),
         growth_memory_limit=UNLIMITED,
-        razorpay_plan_id="plan_TRk5QYflkJTWAp",
+        razorpay_plan_id="plan_TYUCB7kbBRuEq0",
     ),
 }
 
