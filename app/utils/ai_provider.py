@@ -279,6 +279,19 @@ async def calculate_care(
                     season, temperature_c, pot_diameter_cm, room_light,
                 )
             ],
+            # Unlike identify/diagnose (open-ended, one-shot judgment calls
+            # where some variation in wording is fine), this result is a
+            # concrete number a user checks against their own watering
+            # calendar — the same plant with the same season/pot/room-light
+            # inputs should get the same answer every time, not a different
+            # one depending on the model's default sampling temperature
+            # (which defaults to ~1.0, i.e. deliberately varied). temperature=0
+            # asks for the model's single most-likely output instead of a
+            # sampled one, which is as close to deterministic as an LLM call
+            # gets (still not a byte-for-byte guarantee across all inputs/
+            # model versions, but eliminates the "10 days one run, 8 the
+            # next" variance for genuinely identical inputs in practice).
+            config=types.GenerateContentConfig(temperature=0),
         )
         return _parse_json_response(response.text)
     except APIError as exc:
