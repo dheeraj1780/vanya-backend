@@ -89,6 +89,21 @@ class PreferencesData(BaseModel):
     # None means nothing captured yet (common for Apple, always for a
     # never-linked guest) — the client falls back to a name-less greeting.
     name: Optional[str] = None
+    # Captured once at account creation from the verified Firebase identity
+    # (see auth_service.create_user) — None for a guest (no identity at
+    # all). The client used to read this live from Firebase Auth's own
+    # currentUser instead of asking us for it, on the theory that "Firebase
+    # already has it locally the instant a session exists" — but Firebase's
+    # authStateChanges() stream can (and, reported live, does) emit a
+    # transient null well after a genuine sign-in, e.g. if its own local ID
+    # token/session needs a silent refresh that hiccups, even though this
+    # backend's own session token (a completely separate, longer-lived
+    # credential) is still perfectly valid. That's a Firebase-client-SDK
+    # hiccup, not a real sign-out, but the client had no way to tell the
+    # difference and just showed the email as gone until the next explicit
+    # sign-in. Serving it from here instead makes it exactly as stable as
+    # `name` above, which has never had this problem.
+    email: Optional[str] = None
 
 
 class PreferencesUpdateRequest(BaseModel):

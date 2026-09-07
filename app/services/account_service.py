@@ -25,7 +25,7 @@ async def get_preferences(db: AsyncSession, user: User) -> PreferencesData:
         pref = await get_preference(db, user.user_id)
         # Every user gets a default row on creation, but fall back safely
         # if one is somehow missing rather than raising a 404 for a setting.
-        return PreferencesData(reminders_enabled=pref.reminders_enabled if pref else True, name=user.name)
+        return PreferencesData(reminders_enabled=pref.reminders_enabled if pref else True, name=user.name, email=user.email)
     except Exception as exc:
         raise InternalServerError(f"Failed to fetch preferences: {exc}") from exc
 
@@ -43,7 +43,7 @@ async def update_preferences(db: AsyncSession, user: User, reminders_enabled: bo
             # what any client sends.
             user.name = name.strip()[:50] or None
         pref = await upsert_preference(db, user.user_id, reminders_enabled)
-        return PreferencesData(reminders_enabled=pref.reminders_enabled, name=user.name)
+        return PreferencesData(reminders_enabled=pref.reminders_enabled, name=user.name, email=user.email)
     except Exception as exc:
         raise InternalServerError(f"Failed to update preferences: {exc}") from exc
 
