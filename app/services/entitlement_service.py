@@ -26,7 +26,7 @@ from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import AppException, GuestSignInRequiredError, InternalServerError, PlanLimitExceededError
-from app.core.plans import DIAGNOSE_ACTION_COST, FeatureAllowance, PlanConfig, next_tier, plan_for
+from app.core.plans import DIAGNOSE_ACTION_COST, PLANS, REVIEW_COMP_ACCOUNT_EMAILS, FeatureAllowance, PlanConfig, next_tier, plan_for
 from app.models.user import User
 from app.repositories.billing_repository import get_subscription_by_user
 from app.repositories.plant_repository import count_growth_memories_by_plant, count_growth_memories_by_user, count_plants_by_user
@@ -42,6 +42,14 @@ _AI_ACTION_COSTS = {"identify": 1, "calculator": 1, "diagnose": DIAGNOSE_ACTION_
 
 
 def plan_for_user(user: User) -> PlanConfig:
+    # One deliberate exception to "plan is always derived from real
+    # subscription_status/razorpay_plan_id, never hardcoded" — see
+    # REVIEW_COMP_ACCOUNT_EMAILS's own docstring in plans.py. Checked by
+    # email (not user_id) since that's the one stable identifier Google's
+    # reviewer actually signs in with; email is verified server-side by
+    # Firebase at sign-in, never client-supplied here.
+    if user.email and user.email.lower() in REVIEW_COMP_ACCOUNT_EMAILS:
+        return PLANS["green_thumb"]
     return plan_for(user.is_guest, user.subscription_status, user.subscription_product_id)
 
 

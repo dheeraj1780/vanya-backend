@@ -124,6 +124,18 @@ UNLIMITED = -1
 # the client mirrors both still reference it explicitly.
 DIAGNOSE_ACTION_COST = 1
 
+# Play Store reviewer comp account(s) — see plan_for_user's own docstring
+# (entitlement_service.py) for how this is applied. Google's app review
+# needs to see the full paid experience (Growth Journey, etc.) to approve
+# the app, but making that depend on an actual recurring Razorpay
+# subscription just for review purposes is unnecessary cost/risk (a
+# forgotten renewal, a card expiring mid-review, etc.). Scoped to an exact
+# email match only — nobody can grant themselves this by any action of
+# their own; it's not reachable through any API a user controls.
+REVIEW_COMP_ACCOUNT_EMAILS = {
+    "vanya.playreview@gmail.com",
+}
+
 
 @dataclass(frozen=True)
 class FeatureAllowance:
