@@ -133,7 +133,7 @@ DIAGNOSE_ACTION_COST = 1
 # email match only — nobody can grant themselves this by any action of
 # their own; it's not reachable through any API a user controls.
 REVIEW_COMP_ACCOUNT_EMAILS = {
-    "vanya.playreview@gmail.com",
+    "vanyaplayreview@gmail.com",
 }
 
 
